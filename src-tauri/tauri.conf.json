@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Vienna",
+  "version": "0.1.0",
+  "identifier": "app.vienna.chess",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Vienna",
+        "width": 1440,
+        "height": 960,
+        "minWidth": 780,
+        "minHeight": 650,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "resources": [
+      "resources/stockfish/stockfish/**/*",
+      "resources/stockfish/provenance.json",
+      "../LICENSE",
+      "../THIRD_PARTY_NOTICES.md",
+      "../licenses/*"
+    ],
+    "icon": ["icons/icon.ico"],
+    "shortDescription": "Análisis de ajedrez",
+    "category": "Game"
+  }
+}

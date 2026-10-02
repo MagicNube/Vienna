@@ -1,0 +1,8 @@
+{
+  "source": "https://github.com/lichess-org/chess-openings",
+  "commit": "c67912be581f0793dbaa776be5ccf111e01f88d9",
+  "license": "CC0-1.0",
+  "openings": 3815,
+  "edges": 8063,
+  "maxPly": 32
+}

@@ -1,0 +1,10 @@
+node_modules
+dist
+src-tauri/target
+src-tauri/resources
+package-lock.json
+licenses
+test-results
+.vienna-dev
+.vienna-private
+exports

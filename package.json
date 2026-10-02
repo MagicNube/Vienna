@@ -1,0 +1,41 @@
+{
+  "name": "vienna",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "tauri": "tauri",
+    "desktop": "tauri dev",
+    "package": "tauri build",
+    "package:personal": "tauri build --config src-tauri/tauri.personal.conf.json",
+    "sounds:generate": "node scripts/generate-sounds.mjs",
+    "export:github": "node scripts/export-github.mjs",
+    "engine:install": "node scripts/install-engine.mjs",
+    "bridge:build": "cargo build --manifest-path src-tauri/Cargo.toml --bin vienna-bridge --features dev-bridge",
+    "test:native": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:integration": "node scripts/integration.mjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/dm-sans": "^5.3.0",
+    "@fontsource-variable/manrope": "^5.3.0",
+    "@lichess-org/chessground": "^10.4.1",
+    "@tauri-apps/api": "2.12.0",
+    "chess.js": "1.4.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "prettier": "^3.9.9",
+    "typescript": "7.0.2",
+    "vite": "8.3.1",
+    "vitest": "5.0.2"
+  }
+}

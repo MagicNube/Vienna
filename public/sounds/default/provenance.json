@@ -1,0 +1,26 @@
+{
+  "origin": "Original procedural synthesis for Vienna; no external samples",
+  "generator": "scripts/generate-sounds.mjs",
+  "license": "CC0-1.0",
+  "sampleRate": 44100,
+  "channels": 1,
+  "bits": 16,
+  "files": {
+    "move.wav": {
+      "duration": 0.09,
+      "sha256": "1927925bcc868351ae772f9e55d547931f4164fefd4ae5e42e4e89b25831cb71"
+    },
+    "capture.wav": {
+      "duration": 0.15,
+      "sha256": "abe3c06a35accb4b44316e46b683b86ae5c01d0400e934a6a79835cd2549d330"
+    },
+    "check.wav": {
+      "duration": 0.24,
+      "sha256": "a0d0ad373de88c6a34c58129a09d21002bce7b0034000bba64b9b97610fa1ab3"
+    },
+    "mate.wav": {
+      "duration": 0.42,
+      "sha256": "ca41c4f4217f76afad128eeb028a4b3787ba955134d25e63736fc56c9be93cf2"
+    }
+  }
+}
