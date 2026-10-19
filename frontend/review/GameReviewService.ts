@@ -6,8 +6,27 @@ import type { EngineOptions, GameTree, Review } from '../types';
 export const REVIEW_VERSION = 1;
 export class GameReviewService {
   private generation = 0;
+  private paused = false;
+  private waiting = new Set<() => void>();
+  pause() {
+    this.paused = true;
+  }
+  resume() {
+    this.paused = false;
+    this.wake();
+  }
+  private wake() {
+    for (const resolve of this.waiting) resolve();
+    this.waiting.clear();
+  }
+  private async checkpoint(ticket: number) {
+    while (this.paused && ticket === this.generation)
+      await new Promise<void>((resolve) => this.waiting.add(resolve));
+    if (ticket !== this.generation) throw Error('cancelled');
+  }
   cancel() {
     this.generation++;
+    this.wake();
     return engine.cancel('review');
   }
   async run(
@@ -30,7 +49,7 @@ export class GameReviewService {
     };
     const total = tree.mainIds.length;
     for (let i = 0; i < total; i++) {
-      if (ticket !== this.generation) throw Error('cancelled');
+      await this.checkpoint(ticket);
       const id = tree.mainIds[i];
       const analysis = await engine.analyzePosition(tree, id, options, 'review');
       if (ticket !== this.generation) throw Error('cancelled');
@@ -38,11 +57,20 @@ export class GameReviewService {
       if (i > 0) {
         const prev = tree.nodes.find((n) => n.id === tree.mainIds[i - 1])!;
         const next = tree.nodes.find((n) => n.id === id)!;
+        const previous = tree.nodes.find((n) => n.id === prev.parent);
+        const previousLines = previous && review.positions[previous.id]?.lines;
         review.moves.push(
           withBookMove(
             prev,
             next,
-            classify(prev, next, review.positions[prev.id].lines, analysis.lines[0]),
+            classify(
+              prev,
+              next,
+              review.positions[prev.id].lines,
+              analysis.lines[0],
+              undefined,
+              previous && previousLines ? { node: previous, lines: previousLines } : undefined,
+            ),
           )!,
         );
       }
@@ -53,6 +81,7 @@ export class GameReviewService {
         gameId,
         review,
       );
+      if (ticket !== this.generation) throw Error('cancelled');
       onProgress(i + 1, total, {
         ...review,
         positions: { ...review.positions },

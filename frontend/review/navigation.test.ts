@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cycleCategory } from './categoryTour';
+import { cycleCategory, pauseCategoryTour } from './categoryTour';
 import { autoCandidates } from './autoCandidates';
 import { addMove, makeTree } from '../chess/game';
 import { freeLine } from '../chess/freeBoard';
@@ -10,6 +10,20 @@ const moves: MoveReview[] = [
   { ply: 6, color: 'b', category: 'blunder', loss: 0.3, explanation: '', best: '' },
 ];
 describe('recorrido de categorías', () => {
+  it('al navegar libremente oculta el recorrido, conserva Volver y reinicia desde la posición actual', () => {
+    const first = cycleCategory(moves, 'brilliant', 'm8', null)!;
+    const paused = pauseCategoryTour(first, 'm20')!;
+    expect(paused).toMatchObject({ origin: 'm8', paused: true, index: 0 });
+    expect(pauseCategoryTour(paused, first.target)?.paused).toBe(true);
+    expect(cycleCategory(moves, 'brilliant', 'm20', paused)).toMatchObject({
+      origin: 'm20',
+      target: 'm19',
+      index: 0,
+      total: 2,
+    });
+    expect(pauseCategoryTour(paused, 'm8')).toBeNull();
+    expect(pauseCategoryTour(null, 'm20')).toBeNull();
+  });
   it('recorre cada coincidencia y termina para recuperar la posición de origen', () => {
     const first = cycleCategory(moves, 'brilliant', 'custom-position', null)!;
     expect(first).toMatchObject({ origin: 'custom-position', target: 'm19', index: 0, total: 2 });
@@ -76,7 +90,7 @@ describe('cola automática de partidas terminadas', () => {
     );
     expect(candidates.map((g) => g.id)).toEqual(['black', 'new']);
   });
-  it('incluye una partida recién descubierta anterior al inicio sin añadir el resto del historial', () => {
+  it('no confunde la primera descarga de otra cuenta con partidas nuevas', () => {
     const candidates = autoCandidates(
       [
         game('discovered', { date: 50 }),
@@ -86,8 +100,7 @@ describe('cola automática de partidas terminadas', () => {
       ],
       'Player',
       100,
-      new Set(['discovered', 'live', 'other']),
     );
-    expect(candidates.map((game) => game.id)).toEqual(['discovered']);
+    expect(candidates.map((game) => game.id)).toEqual([]);
   });
 });

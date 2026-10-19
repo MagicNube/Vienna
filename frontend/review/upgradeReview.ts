@@ -14,7 +14,22 @@ export function upgradeReview(tree: GameTree, review: Review): Review {
       const lines = review.positions[before.id]?.lines;
       const next = review.positions[id]?.lines[0];
       if (!lines?.length || !next) return [];
-      return [withBookMove(before, after, classify(before, after, lines, next))!];
+      const previous = tree.nodes.find((node) => node.id === before.parent);
+      const previousLines = previous && review.positions[previous.id]?.lines;
+      return [
+        withBookMove(
+          before,
+          after,
+          classify(
+            before,
+            after,
+            lines,
+            next,
+            undefined,
+            previous && previousLines ? { node: previous, lines: previousLines } : undefined,
+          ),
+        )!,
+      ];
     }),
   };
 }

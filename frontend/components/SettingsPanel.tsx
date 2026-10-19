@@ -2,18 +2,40 @@ import { useRef, useState } from 'react';
 import type { Settings } from '../types';
 import { stopChessSound } from '../audio/chessSounds';
 import { SoundPicker } from './SoundPicker';
+import { AnalysisLevelPicker } from './AnalysisLevelPicker';
+import { StorageSettings } from './StorageSettings';
+import { AppearanceSettings } from './AppearanceSettings';
+import {
+  applyProcessingProfile,
+  selectedProcessingProfile,
+  processingProfiles,
+  processingKeys,
+} from '../engine/processingProfiles';
 export function SettingsPanel({
   settings,
   onChange,
+  protectedIds,
+  onStorageCleaned,
+  cpus = 4,
 }: {
   settings: Settings;
   onChange: (settings: Settings) => void;
+  protectedIds: string[];
+  onStorageCleaned: (ids: string[], cache: boolean) => Promise<void>;
+  cpus?: number;
 }) {
-  const [tab, setTab] = useState<'engine' | 'board'>('engine');
+  const [tab, setTab] = useState<'engine' | 'board' | 'appearance' | 'storage'>('engine');
   const latest = useRef(settings);
   latest.current = settings;
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
-    onChange({ ...latest.current, [key]: value });
+    onChange({
+      ...latest.current,
+      [key]: value,
+      ...(processingKeys.some((processingKey) => processingKey === key)
+        ? { processingProfile: 'custom' as const }
+        : {}),
+    });
+  const profile = selectedProcessingProfile(settings, cpus);
   return (
     <div className="settings-panel">
       <div className="settings-tabs" role="tablist" aria-label="Secciones de ajustes">
@@ -35,36 +57,62 @@ export function SettingsPanel({
         >
           Sonido y tablero
         </button>
+        <button
+          id="appearance-settings-tab"
+          role="tab"
+          aria-selected={tab === 'appearance'}
+          aria-controls="settings-content"
+          onClick={() => setTab('appearance')}
+        >
+          Apariencia
+        </button>
+        <button
+          id="storage-settings-tab"
+          role="tab"
+          aria-selected={tab === 'storage'}
+          aria-controls="settings-content"
+          onClick={() => setTab('storage')}
+        >
+          Espacio
+        </button>
       </div>
       <div
         className="settings-tab-body"
         role="tabpanel"
         id="settings-content"
-        aria-labelledby={tab === 'engine' ? 'engine-settings-tab' : 'board-settings-tab'}
+        aria-labelledby={`${tab}-settings-tab`}
       >
         {tab === 'engine' ? (
           <>
             <div className="settings-engine-heading">
               <span>Stockfish 19</span>
-              <button
-                className="secondary"
-                title="8 hilos, 512 MB, 4 líneas, 2 s interactivo y 5 s por posición"
-                onClick={() =>
-                  onChange({
-                    ...settings,
-                    threads: 8,
-                    hash: 512,
-                    multiPv: 4,
-                    interactiveTime: 2000,
-                    reviewTime: 5000,
-                    autoReviewTime: 5000,
-                    depth: null,
-                  })
-                }
-              >
-                Perfil Ryzen 9800X3D
-              </button>
             </div>
+            <fieldset className="processing-profile" aria-label="Perfil de procesamiento">
+              {[...processingProfiles, { id: 'custom' as const, label: 'Personalizado' }].map(
+                (option) => (
+                  <label
+                    key={option.id}
+                    title={
+                      option.id === 'custom'
+                        ? 'Conserva tus valores y permite combinarlos libremente'
+                        : 'Configura recursos, profundidad y tiempos; adapta los hilos a tu equipo'
+                    }
+                  >
+                    <input
+                      type="radio"
+                      name="processing-profile"
+                      value={option.id}
+                      checked={profile === option.id}
+                      aria-label={option.label}
+                      onChange={() =>
+                        onChange(applyProcessingProfile(latest.current, option.id, cpus))
+                      }
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ),
+              )}
+            </fieldset>
             <div className="settings-grid">
               <label>
                 Hilos
@@ -141,7 +189,10 @@ export function SettingsPanel({
               </label>
             </div>
             <section className="settings-auto-review">
-              <label className="toggle-row">
+              <label
+                className="toggle-row"
+                title="Comprueba cada 5 minutos y analiza las partidas nuevas en cola."
+              >
                 <span>Analizar nuevas partidas automáticamente</span>
                 <input
                   type="checkbox"
@@ -150,28 +201,21 @@ export function SettingsPanel({
                 />
               </label>
               <div>
-                <p>Comprueba cada 5 minutos y analiza las partidas nuevas en cola.</p>
-                <label>
-                  Nivel automático
-                  <select
-                    disabled={!settings.autoReview}
-                    value={settings.autoReviewTime}
-                    onChange={(e) => set('autoReviewTime', +e.target.value)}
-                  >
-                    <option value={150}>Rápido (150 ms)</option>
-                    <option value={500}>Normal (500 ms)</option>
-                    <option value={2000}>Profundo (2 s)</option>
-                    <option value={5000}>Máximo (5 s)</option>
-                    {![150, 500, 2000, 5000].includes(settings.autoReviewTime) && (
-                      <option value={settings.autoReviewTime}>
-                        Personalizado ({settings.autoReviewTime} ms)
-                      </option>
-                    )}
-                  </select>
-                </label>
+                <span className="settings-level-heading">Nivel automático</span>
+                <AnalysisLevelPicker
+                  value={settings.autoReviewTime}
+                  onChange={(value) => set('autoReviewTime', value)}
+                  disabled={!settings.autoReview}
+                  label="Nivel automático"
+                  name="automatic-analysis-level"
+                />
               </div>
             </section>
           </>
+        ) : tab === 'appearance' ? (
+          <AppearanceSettings settings={settings} onChange={onChange} />
+        ) : tab === 'storage' ? (
+          <StorageSettings protectedIds={protectedIds} onCleaned={onStorageCleaned} />
         ) : (
           <div className="settings-board">
             <section className="sound-settings">
@@ -212,7 +256,7 @@ export function SettingsPanel({
               {(
                 [
                   ['arrows', 'Flecha de la mejor jugada'],
-                  ['secondArrow', 'Segunda flecha más tenue'],
+                  ['secondArrow', 'Flecha de la segunda mejor jugada'],
                   ['evaluation', 'Barra de evaluación'],
                 ] as const
               ).map(([key, label]) => (
@@ -225,16 +269,6 @@ export function SettingsPanel({
                   />
                 </label>
               ))}
-              <label>
-                Tema
-                <select
-                  value={settings.theme}
-                  onChange={(e) => set('theme', e.target.value as Settings['theme'])}
-                >
-                  <option value="dark">Oscuro</option>
-                  <option value="light">Claro</option>
-                </select>
-              </label>
             </div>
           </div>
         )}

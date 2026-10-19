@@ -58,6 +58,33 @@ describe('calidad práctica de una jugada', () => {
     expect(result.category).toBe('inaccuracy');
     expect(result.loss).toBeCloseTo(moveExpectation(best, 'w') - moveExpectation(played, 'w'));
   });
+  for (const color of ['w', 'b'] as const) {
+    it.each([
+      [343, 0.0201725668, 'good'],
+      [344, 0.0195404134, 'excellent'],
+      [313, 0.0397410525, 'good'],
+      [258, 0.0785961938, 'inaccuracy'],
+    ] as const)(
+      `${color}: frente a una ventaja de 3,76, %s centipeones pierden %s y producen %s`,
+      (cp, loss, category) => {
+        // Score regression from the reported Ad3 / Ab5 alternatives. Use a
+        // separate legal position; these numbers do not reconstruct that game.
+        const tree = makeTree(color === 'w' ? '1. d4 *' : '1. e4 e5 *');
+        const before = tree.nodes.at(-2)!;
+        const after = tree.nodes.at(-1)!;
+        const sign = color === 'w' ? 1 : -1;
+        const best = { ...line(376 * sign, [color === 'w' ? 'e2e4' : 'c7c5']), depth: 21 };
+        const played = { ...line(cp * sign, [after.uci], 2), depth: 21 };
+        const result = classify(before, after, [best, played], line(-2000 * sign, []));
+        expect(result.loss).toBeCloseTo(loss, 9);
+        expect(result.category).toBe(category);
+        // Candidate rank alone does not decide Excellent versus Good.
+        expect(classify(before, after, [best, { ...played, rank: 4 }], played).category).toBe(
+          category,
+        );
+      },
+    );
+  }
   it('conserva Grave error para pérdidas grandes y no suaviza una pieza colgada', () => {
     const tree = makeTree('1. d4 *');
     const result = classify(tree.nodes[0], tree.nodes[1], [line(0, ['e2e4'])], line(-500, []));

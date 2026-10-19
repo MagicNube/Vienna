@@ -83,7 +83,7 @@ export function MoveList({
             <p>Sin movimientos</p>
             <span>
               {line
-                ? 'Mueve una pieza o elige una apertura.'
+                ? 'Mueve una pieza para comenzar.'
                 : 'Importa un PGN para ver los movimientos.'}
             </span>
             {!line && (

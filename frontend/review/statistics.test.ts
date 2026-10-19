@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   ownColor,
+  isStatisticsGame,
   filteredEntries,
   gameResult,
   statistics,
+  categoryGames,
   type StatisticsEntry,
 } from './statistics';
 import type { Game, MoveReview, Review } from '../types';
@@ -44,6 +46,52 @@ const review = (moves: MoveReview[], complete = true): Review => ({
 });
 
 describe('estadísticas de la cuenta', () => {
+  it('lista cada partida una vez y cuenta solo la categoría propia de análisis completos', () => {
+    const entries = [
+      {
+        ...entry({ id: 'mine' }),
+        review: review([move('brilliant', 'w'), move('brilliant', 'w'), move('brilliant', 'b')]),
+      },
+      { ...entry({ id: 'rival' }), review: review([move('brilliant', 'b')]) },
+      {
+        ...entry({ id: 'black' }, 'b'),
+        review: review([move('brilliant', 'b'), move('great', 'b')]),
+      },
+      { ...entry({ id: 'partial' }), review: review([move('brilliant', 'w')], false) },
+      entry({ id: 'missing' }),
+    ];
+    const matches = categoryGames(entries, 'brilliant');
+    expect(matches.map(({ game, count }) => [game.id, count])).toEqual([
+      ['mine', 2],
+      ['black', 1],
+    ]);
+    expect(matches.reduce((sum, match) => sum + match.count, 0)).toBe(
+      statistics(entries).counts.brilliant,
+    );
+    expect(categoryGames(entries, 'great').map(({ game }) => game.id)).toEqual(['black']);
+    expect(categoryGames(entries, 'book')).toEqual([]);
+  });
+  it('el acceso a una categoría conserva los filtros de periodo, modo y color', () => {
+    const now = 100 * 86_400_000;
+    const entries = [
+      { ...entry({ id: 'selected' }, 'b'), review: review([move('brilliant', 'b')]) },
+      {
+        ...entry({ id: 'old', date: now - 8 * 86_400_000 }, 'b'),
+        review: review([move('brilliant', 'b')]),
+      },
+      {
+        ...entry({ id: 'otherMode', timeClass: 'rapid' }, 'b'),
+        review: review([move('brilliant', 'b')]),
+      },
+      { ...entry({ id: 'white' }), review: review([move('brilliant', 'w')]) },
+    ];
+    expect(
+      categoryGames(
+        filteredEntries(entries, { mode: 'blitz', days: 7, color: 'b' }, now),
+        'brilliant',
+      ).map(({ game }) => game.id),
+    ).toEqual(['selected']);
+  });
   it('identifica el color sin distinguir mayúsculas y excluye partidas ajenas', () => {
     expect(ownColor(game(), ' playerone ', 'b')).toBe('w');
     expect(ownColor(game({ white: 'Rival', black: 'PLAYERONE' }), 'PlayerOne', 'w')).toBe('b');
@@ -66,7 +114,18 @@ describe('estadísticas de la cuenta', () => {
     ]);
     expect(stats.finished).toBe(3);
     expect(stats.winrate).toBeCloseTo(100 / 3);
+    expect(stats.losses).toBe(1);
+    expect(stats.draws).toBe(1);
+    expect(stats.scoreRate).toBe(50);
     expect(statistics([entry({ result: '*' })]).winrate).toBeNull();
+    expect(statistics([entry({ result: '*' })]).scoreRate).toBeNull();
+  });
+  it('una tabla suma medio punto sin contar como derrota ni como victoria', () => {
+    const stats = statistics([entry({ result: '1/2-1/2' })]);
+    expect([stats.wins, stats.draws, stats.losses]).toEqual([0, 1, 0]);
+    expect(stats.winrate).toBe(0);
+    expect(stats.scoreRate).toBe(50);
+    expect(statistics([entry(), entry({ result: '1/2-1/2' })]).scoreRate).toBe(75);
   });
   it('combina periodo, modo y color, incluyendo el límite del periodo', () => {
     const now = 100 * 86_400_000;
@@ -105,9 +164,9 @@ describe('estadísticas de la cuenta', () => {
     expect(stats.counts.book).toBe(1);
     expect(stats.accuracy).toBeCloseTo(100 * Math.exp(-4 * 0.125));
   });
-  it('conserva las nueve categorías vacías y no inventa precisión sin análisis', () => {
+  it('conserva las diez categorías vacías y no inventa precisión sin análisis', () => {
     const stats = statistics([]);
-    expect(Object.keys(stats.counts)).toHaveLength(9);
+    expect(Object.keys(stats.counts)).toHaveLength(10);
     expect(Object.values(stats.counts).every((n) => n === 0)).toBe(true);
     expect(stats.accuracy).toBeNull();
     expect(stats.elo).toEqual([]);
@@ -136,4 +195,52 @@ describe('estadísticas de la cuenta', () => {
     expect(stats.finished).toBe(6);
     expect(stats.elo).toEqual([]);
   });
+});
+
+it('excludes coach accounts of either color from all filtered statistics', () => {
+  const pgn = '[Event "Play vs Coach"]\n[Site "Chess.com"]\n\n1. e4 *';
+  const coach = entry({ id: 'coach', black: 'Coach-Mae', pgn });
+  const coachWhite = entry({ id: 'coach-white', white: 'COACH-Li', pgn });
+  expect(isStatisticsGame(coach.game)).toBe(false);
+  expect(isStatisticsGame(coachWhite.game)).toBe(false);
+  expect(
+    filteredEntries(
+      [coach, coachWhite, entry()],
+      { mode: 'all', days: 0, color: 'all' },
+      Date.now(),
+    ).map((e) => e.game.id),
+  ).toEqual(['one']);
+  expect(
+    statistics(
+      filteredEntries([coach, entry()], { mode: 'all', days: 0, color: 'all' }, Date.now()),
+    ).finished,
+  ).toBe(1);
+});
+
+it('keeps human Coach nicknames and excludes all computer metrics without deleting entries', () => {
+  const human = {
+    ...entry({ black: 'Coach-Manolin' }),
+    review: review([move('excellent', 'w', 0.01)]),
+  };
+  const coach = {
+    ...entry({
+      id: 'coach',
+      black: 'NewCoach',
+      whiteElo: '9999',
+      pgn: '[Event "Play vs Coach"]\n[Site "Chess.com"]\n\n1. e4 *',
+    }),
+    review: review([move('brilliant', 'w')]),
+  };
+  const bot = {
+    ...entry({ id: 'bot', url: 'https://www.chess.com/game/computer/123' }),
+    review: review([move('brilliant', 'w')]),
+  };
+  const entries = [human, coach, bot];
+  expect(statistics(entries)).toEqual(statistics([human]));
+  expect(categoryGames(entries, 'brilliant')).toEqual([]);
+  expect(filteredEntries(entries, { mode: 'all', days: 0, color: 'all' }, Date.now())).toEqual([
+    human,
+  ]);
+  expect(entries).toHaveLength(3);
+  expect(entries.map((e) => e.game.id)).toEqual(['one', 'coach', 'bot']);
 });

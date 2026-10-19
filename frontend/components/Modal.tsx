@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import { Icon } from './Icon';
 import { backdropGesture, type Point } from './modalInteraction';
+import { WindowTitleBar } from './WindowTitleBar';
 export function Modal({
   title,
   onClose,
@@ -15,10 +16,12 @@ export function Modal({
   className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
   const pointerStart = useRef<Point | null>(null);
   useLayoutEffect(() => {
     const d = ref.current!;
     d.showModal();
+    closeButton.current?.focus();
     return () => d.close();
   }, []);
   return (
@@ -42,9 +45,17 @@ export function Modal({
           onClose();
       }}
     >
+      {typeof document !== 'undefined' &&
+        document.documentElement.dataset.windowChrome === 'custom' && <WindowTitleBar />}
       <header>
         <h2>{title}</h2>
-        <button className="icon-button" aria-label="Cerrar" onClick={onClose}>
+        <button
+          ref={closeButton}
+          className="icon-button"
+          aria-label="Cerrar"
+          onClick={onClose}
+          autoFocus
+        >
           <Icon name="close" />
         </button>
       </header>

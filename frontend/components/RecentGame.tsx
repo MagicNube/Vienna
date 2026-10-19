@@ -36,9 +36,8 @@ export function RecentGame({
   onSelect,
   now,
   reviewed,
+  seen = false,
   job,
-  onAnalyze,
-  canAnalyze,
 }: {
   game: Game;
   selected: boolean;
@@ -46,9 +45,8 @@ export function RecentGame({
   onSelect: () => void;
   now: number;
   reviewed: boolean;
+  seen?: boolean;
   job?: ReviewJob;
-  onAnalyze: () => void;
-  canAnalyze: boolean;
 }) {
   const label = `Blancas: ${game.white}. Negras: ${game.black}. ${gameOutcome(game)}.`;
   const result = game.result === '1/2-1/2' ? 'draw' : accountOutcome(game, username);
@@ -58,10 +56,7 @@ export function RecentGame({
     const label = result === 'win' ? 'Victoria' : result === 'loss' ? 'Derrota' : 'Tablas';
     return (
       <span className={`recent-outcome ${result}`} role="img" aria-label={label} title={label}>
-        <Icon
-          name={result === 'win' ? 'crown' : result === 'loss' ? 'close' : 'equal'}
-          size={16}
-        />
+        <Icon name={result === 'win' ? 'crown' : result === 'loss' ? 'close' : 'equal'} size={16} />
       </span>
     );
   }
@@ -95,19 +90,7 @@ export function RecentGame({
       </button>
       <span className="recent-meta">
         <span className="recent-review-actions">
-          {!reviewed && !job ? (
-            <button
-              className="recent-analyze"
-              onClick={onAnalyze}
-              disabled={!canAnalyze}
-              aria-label={`Analizar partida de ${game.white} contra ${game.black}`}
-              title="Analizar con el nivel automático configurado"
-            >
-              Analizar
-            </button>
-          ) : (
-            <ReviewStatus reviewed={reviewed} job={job} showUnreviewed />
-          )}
+          <ReviewStatus reviewed={reviewed} seen={seen} job={job} />
         </span>
         <time
           className="recent-age"

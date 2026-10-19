@@ -7,6 +7,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const target = path.join(root, 'exports', 'Vienna-GitHub-' + stamp);
 const files = [
+  '.gitattributes',
   '.gitignore',
   '.prettierignore',
   '.prettierrc.json',
@@ -61,7 +62,12 @@ for (const relative of [...new Set(files)].sort()) {
       'Anonymous position regression: bishop sacrifice, rejected principal variation and native engine confirmation.';
     await writeFile(destination, JSON.stringify(fixture, null, 2) + '\n');
   } else await copyFile(source, destination);
-  const bytes = await readFile(destination);
+  let bytes = await readFile(destination);
+  // Keep the manifest valid after Git checkout on Windows as well as in the ZIP.
+  if (!bytes.includes(0)) {
+    bytes = Buffer.from(bytes.toString('utf8').replaceAll('\r\n', '\n'));
+    await writeFile(destination, bytes);
+  }
   if (
     /\.(ts|tsx|json|md|mjs|rs|toml)$/.test(relative) &&
     /C:[\\/]Users[\\/]|data:image\/[\w.+-]+;base64,[a-z\d+/=]{256}/i.test(

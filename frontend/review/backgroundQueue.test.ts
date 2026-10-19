@@ -47,6 +47,25 @@ function setup() {
   });
   return { queue, owner, saved, read, run, notify, onReview, cancel, onJobs };
 }
+
+it('una cola pausada acepta partidas nuevas pero no empieza ninguna hasta reanudar', async () => {
+  const t = setup();
+  t.queue.pause();
+  await t.queue.add([game('a'), game('b')]);
+  t.queue.analyze(game('c'), t.run);
+  await t.queue.drain();
+  expect(t.run).not.toHaveBeenCalled();
+  expect(t.onJobs.mock.lastCall?.[0]).toMatchObject({
+    a: { state: 'queued' },
+    b: { state: 'queued' },
+    c: { state: 'queued' },
+  });
+  t.queue.resume();
+  await vi.waitFor(() => expect(t.run).toHaveBeenCalledTimes(3));
+  expect(t.run.mock.calls.map((call) => call[0].id)).toEqual(['a', 'b', 'c']);
+  expect(t.cancel).not.toHaveBeenCalled();
+  t.queue.stop();
+});
 it('serializa nuevas partidas recibidas durante un análisis y no repite las completadas', async () => {
   const t = setup();
   let finish!: (review: Review) => void;
@@ -65,11 +84,15 @@ it('serializa nuevas partidas recibidas durante un análisis y no repite las com
   finish(result);
   await vi.waitFor(() => expect(t.run).toHaveBeenCalledTimes(2));
   await vi.waitFor(() => expect(t.owner.current).toBeNull());
-  t.queue.add([game('a'), game('b')]);
-  await vi.waitFor(() => expect(t.read).toHaveBeenCalledTimes(4));
+  await t.queue.add([game('a'), game('b')]);
+  expect(t.onJobs).toHaveBeenLastCalledWith({});
   expect(t.run.mock.calls.map((call) => call[0].id)).toEqual(['a', 'b']);
   expect(t.notify).toHaveBeenLastCalledWith(
-    expect.objectContaining({ kind: 'success', id: expect.stringMatching(/^b:\d+:complete$/) }),
+    expect.objectContaining({
+      kind: 'success',
+      gameId: 'b',
+      id: expect.stringMatching(/^b:\d+:complete$/),
+    }),
   );
   t.queue.stop();
 });
@@ -86,7 +109,7 @@ it('publica el inicio antes de la primera posición y actualiza las marcas de am
   t.queue.add([game('new')]);
   await vi.waitFor(() => expect(t.run).toHaveBeenCalledOnce());
   expect(t.onJobs).toHaveBeenLastCalledWith({ new: { state: 'analysing', done: 0 } });
-  t.queue.add([game('waiting')]);
+  await t.queue.add([game('waiting')]);
   expect(t.onJobs).toHaveBeenLastCalledWith({
     new: { state: 'analysing', done: 0 },
     waiting: { state: 'queued', done: 0 },
@@ -96,6 +119,116 @@ it('publica el inicio antes de la primera posición y actualiza las marcas de am
   finish(result);
   await vi.waitFor(() => expect(t.onJobs).toHaveBeenLastCalledWith({}));
   expect(t.run.mock.calls.map(([game]) => game.id)).toEqual(['new', 'waiting']);
+  t.queue.stop();
+});
+
+it('un sondeo con otra partida activa no marca como pendientes las ya analizadas', async () => {
+  const t = setup();
+  t.saved.set('completed-b', result);
+  t.saved.set('completed-c', result);
+  t.saved.set('partial', { ...result, complete: false });
+  let finish!: (review: Review) => void;
+  t.run.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await t.queue.add([game('active')]);
+  await vi.waitFor(() => expect(t.run).toHaveBeenCalledOnce());
+  await t.queue.add([game('active'), game('completed-b'), game('completed-c'), game('partial')]);
+  expect(t.onJobs).toHaveBeenLastCalledWith({
+    active: { state: 'analysing', done: 0 },
+    partial: { state: 'queued', done: 0 },
+  });
+  expect(t.onJobs.mock.calls.every(([jobs]) => !jobs['completed-b'] && !jobs['completed-c'])).toBe(
+    true,
+  );
+  expect(t.saved.get('completed-b')).toBe(result);
+  expect(t.onReview).not.toHaveBeenCalled();
+  finish(result);
+  await vi.waitFor(() => expect(t.onJobs).toHaveBeenLastCalledWith({}));
+  expect(t.run.mock.calls.map(([g]) => g.id)).toEqual(['active', 'partial']);
+  t.queue.stop();
+});
+
+it('un sondeo no oculta ni sustituye un reanálisis manual solicitado durante la lectura', async () => {
+  const t = setup();
+  let finishRead!: (review: Review | null) => void;
+  t.read.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finishRead = resolve;
+      }),
+  );
+  const scanning = t.queue.add([game('same')]);
+  let finish!: (review: Review) => void;
+  const manual = vi.fn(
+    () =>
+      new Promise<Review>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  t.queue.analyze(game('same'), manual);
+  await vi.waitFor(() => expect(manual).toHaveBeenCalledOnce());
+  finishRead(null);
+  await scanning;
+  expect(t.onJobs).toHaveBeenLastCalledWith({
+    same: { state: 'analysing', done: 0, manual: true },
+  });
+  expect(t.run).not.toHaveBeenCalled();
+  finish(result);
+  await vi.waitFor(() => expect(t.onJobs).toHaveBeenLastCalledWith({}));
+  t.queue.stop();
+});
+
+it('cerrar mientras comprueba una partida no publica una cola ni inicia el motor después', async () => {
+  const t = setup();
+  let finishRead!: (review: Review | null) => void;
+  t.read.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finishRead = resolve;
+      }),
+  );
+  const scanning = t.queue.add([game('new')]);
+  t.queue.stop();
+  finishRead(null);
+  await scanning;
+  expect(t.onJobs).toHaveBeenCalledExactlyOnceWith({});
+  expect(t.run).not.toHaveBeenCalled();
+  expect(t.notify).not.toHaveBeenCalled();
+});
+
+it('conserva el orden y evita duplicados aunque las lecturas terminen en otro orden', async () => {
+  const t = setup();
+  t.owner.current = 'manual';
+  const reads = new Map<string, (review: Review | null) => void>();
+  t.read.mockImplementationOnce(
+    (g) =>
+      new Promise((resolve) => {
+        reads.set(g.id, resolve);
+      }),
+  );
+  t.read.mockImplementationOnce(
+    (g) =>
+      new Promise((resolve) => {
+        reads.set(g.id, resolve);
+      }),
+  );
+  const scanning = t.queue.add([game('a'), game('b'), game('a')]);
+  await t.queue.add([game('b'), game('a')]);
+  expect(t.read).toHaveBeenCalledTimes(2);
+  reads.get('b')!(null);
+  reads.get('a')!(null);
+  await scanning;
+  expect(t.onJobs).toHaveBeenLastCalledWith({
+    a: { state: 'queued', done: 0 },
+    b: { state: 'queued', done: 0 },
+  });
+  t.owner.current = null;
+  await t.queue.drain();
+  expect(t.run.mock.calls.map(([g]) => g.id)).toEqual(['a', 'b']);
   t.queue.stop();
 });
 it('espera al análisis manual y reanuda una revisión parcial cancelada', async () => {
@@ -122,7 +255,8 @@ it('espera al análisis manual y reanuda una revisión parcial cancelada', async
   expect(t.onReview).not.toHaveBeenCalled();
   t.owner.current = null;
   t.saved.set('a', { ...result, complete: false });
-  await t.queue.drain();
+  await t.queue.add([game('a')]);
+  await vi.waitFor(() => expect(t.owner.current).toBeNull());
   expect(t.run).toHaveBeenCalledTimes(2);
   expect(t.onReview).toHaveBeenLastCalledWith(game('a'), result);
   t.queue.stop();

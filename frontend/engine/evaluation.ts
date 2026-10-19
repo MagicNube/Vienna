@@ -11,6 +11,21 @@ export function evaluationSide(line: EngineLine | undefined): Color | null {
   if (line.cp === null || line.cp === 0) return null;
   return line.cp > 0 ? 'w' : 'b';
 }
+
+/** Visual advantage gauge, independent of WDL expected score used by move quality.
+ * A fixed, symmetric curve keeps the same displayed evaluation at the same height:
+ * +1 is about 60%, +3 about 77%, and +5 about 88% White.
+ */
+export function evaluationWhitePercent(line: EngineLine | undefined): number {
+  if (!line) return 50;
+  if (line.mate !== null) {
+    const side = evaluationSide(line);
+    return side === 'w' ? 97 : side === 'b' ? 3 : 50;
+  }
+  if (line.cp === null || !Number.isFinite(line.cp)) return 50;
+  return Math.max(3, Math.min(97, 100 / (1 + Math.exp(-0.004 * line.cp))));
+}
+
 export function evaluationDescription(line: EngineLine | undefined) {
   const side = evaluationSide(line);
   return !line || (line.cp === null && line.mate === null)

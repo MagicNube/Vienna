@@ -3,8 +3,9 @@ import type { Category, EngineLine, MoveReview, PositionNode } from '../types';
 import { moveExpectation } from './moveQuality';
 import { pvSan } from '../chess/game';
 import { distinctLines } from '../engine/lines';
-import { hasSacrifice } from './sacrifice';
-export const CLASSIFICATION_VERSION = 6;
+import { hasSacrifice, hasMateForkSacrifice } from './sacrifice';
+import { withMissedOpportunity, type PreviousPosition } from './missedOpportunity';
+export const CLASSIFICATION_VERSION = 12;
 export const categories: Record<Category, { label: string; symbol: string; color: string }> = {
   brilliant: { label: 'Brillante', symbol: '!!', color: '#5acac4' },
   great: { label: 'Genial', symbol: '!', color: '#91b1ed' },
@@ -13,6 +14,7 @@ export const categories: Record<Category, { label: string; symbol: string; color
   excellent: { label: 'Excelente', symbol: '👍', color: '#a5ba8e' },
   good: { label: 'Buena', symbol: '✓', color: '#a2ada1' },
   inaccuracy: { label: 'Imprecisión', symbol: '?!', color: '#e5bd6d' },
+  miss: { label: 'Oportunidad perdida', symbol: '⊘', color: '#e8a86c' },
   mistake: { label: 'Error', symbol: '?', color: '#e3985c' },
   blunder: { label: 'Grave error', symbol: '??', color: '#ef8186' },
 };
@@ -24,7 +26,7 @@ const reviewRules = {
   inaccuracyLoss: 0.1,
   mistakeLoss: 0.2,
   specialMinDepth: 16,
-  brilliantMinDepth: 10,
+  brilliantMinDepth: 16,
   // Roughly half a pawn against the mover still belongs to the equal band.
   brilliantMinimumExpected: 0.455,
   sacrificeNetLoss: 1,
@@ -40,6 +42,7 @@ export function classify(
   lines: EngineLine[],
   next: EngineLine,
   rules = reviewRules,
+  previous?: PreviousPosition,
 ): MoveReview {
   const chess = new Chess(before.fen);
   const color = chess.turn();
@@ -69,24 +72,38 @@ export function classify(
   const alternativeExpected = alternatives.length
     ? Math.max(...alternatives.map((line) => moveExpectation(line, color)))
     : null;
+  // An unfinished higher-ranked alternative must not disappear from the
+  // comparison and make a move look uniquely good or a sacrifice safe.
+  const comparableAlternatives = candidates.every((line) => line.depth === best.depth);
   let sacrifice = false;
+  let mateFork = false;
   if (
     played &&
     played.depth === best.depth &&
     played.depth >= rules.brilliantMinDepth &&
+    comparableAlternatives &&
     loss + epsilon < rules.excellentLoss &&
     choices > 1 &&
     played.pv.length >= 3 &&
     playedExpected >= rules.brilliantMinimumExpected &&
-    alternativeExpected !== null &&
-    alternativeExpected < rules.completelyWinningExpected
+    alternativeExpected !== null
   ) {
-    sacrifice = hasSacrifice(before.fen, color, played.pv, rules.sacrificeNetLoss);
+    const normallyEligible = alternativeExpected < rules.completelyWinningExpected;
+    // Winning alternatives still exclude routine offers. This exception requires
+    // the best move and a legal proof of both acceptance and refusal outcomes.
+    if (normallyEligible) {
+      sacrifice = hasSacrifice(before.fen, color, played.pv, rules.sacrificeNetLoss);
+    } else if (isBest && playedExpected >= rules.completelyWinningExpected) {
+      mateFork = hasMateForkSacrifice(before.fen, color, after.uci, rules.sacrificeNetLoss);
+      sacrifice = mateFork && hasSacrifice(before.fen, color, played.pv, rules.sacrificeNetLoss);
+      mateFork = sacrifice;
+    }
     if (sacrifice) category = 'brilliant';
   }
   if (
     category === 'best' &&
     best.depth >= rules.specialMinDepth &&
+    comparableAlternatives &&
     alternatives.every((line) => line.depth >= rules.specialMinDepth) &&
     choices > 1 &&
     alternativeExpected !== null &&
@@ -106,11 +123,21 @@ export function classify(
         : `Mantiene las opciones estimadas. El motor prefiere ${recommendation}.`;
   if (sacrifice)
     explanation =
-      'Ofrece una pieza con un coste material real si el rival acepta, descontando las recapturas en esa casilla. Puede rechazar el sacrificio o haber compensación táctica en otra casilla. Es la mejor o casi la mejor y mantiene una posición favorable o aproximadamente equilibrada.';
+      'Ofrece una pieza con un coste material real si el rival acepta, descontando las recapturas. Es la mejor o casi la mejor y mantiene una posición favorable o aproximadamente equilibrada. El motor confirma la jugada y sus alternativas a profundidad 16 o superior.';
+  if (mateFork)
+    explanation =
+      'Jaque y tenedor de rey y dama con una pieza ofrecida. Aceptarla permite mate en una; rechazarla permite capturar la dama. Es la mejor jugada confirmada por el motor.';
   if (category === 'great')
     explanation =
       'Es la mejor opción: conserva una posición equilibrada o ganadora que las otras líneas analizadas no mantienen. La diferencia de expectativa es de al menos 15 puntos porcentuales.';
-  return { ply: after.ply, color, category, loss, explanation, best: best.pv[0] ?? '' };
+  return withMissedOpportunity(
+    { ply: after.ply, color, category, loss, explanation, best: best.pv[0] ?? '' },
+    before,
+    after,
+    candidates,
+    next,
+    previous,
+  );
 }
 export function accuracy(moves: MoveReview[]) {
   moves = moves.filter((move) => move.category !== 'book');

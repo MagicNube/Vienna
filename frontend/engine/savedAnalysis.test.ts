@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { makeTree } from '../chess/game';
-import { savedAnalysis } from './savedAnalysis';
+import { savedAnalysis, reviewMatchesOptions } from './savedAnalysis';
 import type { Analysis, Review } from '../types';
 
 const tree = makeTree('1. e4 e5 *');
@@ -17,6 +17,24 @@ const review: Review = {
   options: { threads: 8, hash: 512, multiPv: 3, movetime: 5000, depth: null },
   positions: { m0: stored },
 };
+
+it('permite reanalizar al cambiar motor, profundidad, tiempo o pedir más líneas', () => {
+  expect(reviewMatchesOptions(review, review.options, 'test')).toBe(true);
+  expect(reviewMatchesOptions(review, review.options, 'new-engine')).toBe(false);
+  expect(reviewMatchesOptions(review, { ...review.options, depth: 20 }, 'test')).toBe(false);
+  expect(reviewMatchesOptions(review, { ...review.options, movetime: 2000 }, 'test')).toBe(false);
+  expect(reviewMatchesOptions(review, { ...review.options, multiPv: 5 }, 'test')).toBe(false);
+  const limited = { ...review, options: { ...review.options, depth: 16 } };
+  expect(reviewMatchesOptions(limited, review.options, 'test')).toBe(false);
+});
+
+it('reutiliza el mismo análisis con menos líneas o distintos recursos del equipo', () => {
+  expect(
+    reviewMatchesOptions(review, { ...review.options, threads: 2, hash: 128, multiPv: 2 }, 'test'),
+  ).toBe(true);
+  expect(reviewMatchesOptions({ ...review, complete: false }, review.options, 'test')).toBe(false);
+  expect(reviewMatchesOptions(null, review.options, 'test')).toBe(false);
+});
 it('recupera las mismas líneas originales tras guardar, abrir y volver a la posición', () => {
   const reopened = JSON.parse(JSON.stringify(review)) as Review;
   expect(savedAnalysis(tree.nodes[0], reopened, false)?.lines).toEqual(stored.lines);

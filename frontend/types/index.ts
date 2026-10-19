@@ -55,6 +55,7 @@ export type Category =
   | 'excellent'
   | 'good'
   | 'inaccuracy'
+  | 'miss'
   | 'mistake'
   | 'blunder'
   | 'book';
@@ -76,6 +77,8 @@ export interface Review {
   complete: boolean;
 }
 export interface Settings {
+  appearance?: 'vienna' | 'walnut';
+  density?: 'comfortable' | 'compact';
   sounds: boolean;
   soundVolume: number;
   customSounds?: Partial<
@@ -85,7 +88,7 @@ export interface Settings {
   autoReviewTime: number;
   username: string;
   profileImage?: string;
-  theme: 'dark' | 'light';
+  processingProfile?: 'low' | 'medium' | 'high' | 'maximum' | 'custom';
   arrows: boolean;
   secondArrow: boolean;
   evaluation: boolean;
@@ -97,18 +100,19 @@ export interface Settings {
   reviewTime: number;
 }
 export const defaultSettings: Settings = {
+  appearance: 'vienna',
+  density: 'comfortable',
   sounds: true,
   soundVolume: 0.5,
   autoReview: true,
   autoReviewTime: 5000,
   username: '',
-  theme: 'dark',
   arrows: true,
   secondArrow: false,
   evaluation: true,
   threads: 0,
   hash: 256,
-  multiPv: 4,
+  multiPv: 5,
   interactiveTime: 1000,
   depth: null,
   reviewTime: 5000,

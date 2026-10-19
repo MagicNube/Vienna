@@ -6,6 +6,11 @@ export interface CategoryTour {
   index: number;
   total: number;
   target: string;
+  paused?: boolean;
+}
+/** Hide the category selection while retaining its return destination. */
+export function pauseCategoryTour(tour: CategoryTour | null, destination: string) {
+  return tour && destination !== tour.origin ? { ...tour, paused: true } : null;
 }
 export function cycleCategory(
   moves: MoveReview[],
@@ -18,11 +23,11 @@ export function cycleCategory(
     .filter((m) => m.category === category && (!color || m.color === color))
     .sort((a, b) => a.ply - b.ply);
   if (!matches.length) return tour;
-  const continuing = tour?.category === category && tour.color === color;
+  const continuing = !tour?.paused && tour?.category === category && tour.color === color;
   const index = continuing ? tour.index + 1 : 0;
   if (index >= matches.length) return null;
   return {
-    origin: tour?.origin ?? current,
+    origin: tour?.paused ? current : (tour?.origin ?? current),
     category,
     color,
     index,

@@ -1,6 +1,6 @@
 import type { Game, Review } from '../types';
 export type ReviewJob = {
-  state: 'queued' | 'analysing';
+  state: 'queued' | 'analysing' | 'paused';
   done: number;
   total?: number;
   manual?: boolean;
@@ -12,11 +12,13 @@ type RunReview = (
 
 export type BackgroundActivity = {
   id: string;
+  gameId?: string;
   kind: 'progress' | 'success' | 'error';
   title: string;
   detail: string;
   done?: number;
   total?: number;
+  paused?: boolean;
 };
 
 // Downloads can enqueue games while the single review lane is occupied.
@@ -29,6 +31,9 @@ export function createBackgroundQueue({
   notify,
   onReview,
   onJobs,
+  pause,
+  resume,
+  onPaused,
 }: {
   owner: { current: 'manual' | 'auto' | null };
   read: (game: Game) => Promise<Review | null>;
@@ -38,8 +43,12 @@ export function createBackgroundQueue({
   notify: (activity: BackgroundActivity | null) => void;
   onReview: (game: Game, review: Review) => void;
   onJobs?: (jobs: Record<string, ReviewJob>) => void;
+  pause?: () => void;
+  resume?: () => void;
+  onPaused?: (paused: boolean) => void;
 }) {
   const pending = new Map<string, { game: Game; run?: RunReview; cancelled?: boolean }>();
+  const checking = new Set<string>();
   const jobs: Record<string, ReviewJob> = {};
   const publish = () => onJobs?.({ ...jobs });
   const remove = (id: string) => {
@@ -48,21 +57,23 @@ export function createBackgroundQueue({
     publish();
   };
   let active = true;
+  let paused = false;
+  let progressActivity: BackgroundActivity | null = null;
   let draining = false;
   let current: { game: Game; run?: RunReview; cancelled?: boolean } | null = null;
   let sequence = 0;
   const manualRunning = () => owner.current === 'manual';
   async function drain() {
-    if (!active || draining || manualRunning()) return;
+    if (!active || paused || draining || manualRunning()) return;
     draining = true;
     try {
       for (const task of pending.values()) {
         const { game } = task;
-        if (!active || manualRunning()) break;
+        if (!active || paused || manualRunning()) break;
         let saved: Review | null = null;
         try {
           saved = await read(game);
-          if (!active || manualRunning()) break;
+          if (!active || paused || manualRunning()) break;
           if (task.cancelled) continue;
           if (!task.run && saved?.complete && compatible(saved)) {
             remove(game.id);
@@ -75,37 +86,44 @@ export function createBackgroundQueue({
           owner.current = origin;
           jobs[game.id] = { state: 'analysing', done: 0, ...manual };
           publish();
-          notify({
+          progressActivity = {
             id: activityId,
+            gameId: game.id,
             kind: 'progress',
             title: 'Analizando partida',
             detail: `${game.white} vs ${game.black}`,
             done: 0,
-          });
+          };
+          notify(progressActivity);
           const result = await (task.run ?? run)(game, (done, total, review) => {
             if (!active || task.cancelled || owner.current !== origin) return;
-            jobs[game.id] = { state: 'analysing', done, total, ...manual };
+            jobs[game.id] = { state: paused ? 'paused' : 'analysing', done, total, ...manual };
             publish();
-            notify({
+            progressActivity = {
               id: activityId,
+              gameId: game.id,
               kind: 'progress',
-              title: 'Analizando partida',
+              title: paused ? 'Análisis en pausa' : 'Analizando partida',
               detail: `${game.white} vs ${game.black}`,
               done,
               total,
-            });
+              paused,
+            };
+            notify(progressActivity);
             onReview(game, review);
           });
           if (!active) break;
           if (task.cancelled) {
             if (saved?.complete) onReview(game, saved);
             remove(game.id);
+            notify(null);
             continue;
           }
           remove(game.id);
           onReview(game, result);
           notify({
             id: `${activityId}:complete`,
+            gameId: game.id,
             kind: 'success',
             title: 'Partida analizada',
             detail: `${game.white} vs ${game.black}`,
@@ -127,6 +145,7 @@ export function createBackgroundQueue({
           remove(game.id); // Retry at the next scan, not in a busy loop.
           notify({
             id: `${game.id}:error`,
+            gameId: game.id,
             kind: 'error',
             title: 'No se pudo analizar',
             detail: task.run
@@ -135,6 +154,7 @@ export function createBackgroundQueue({
           });
         } finally {
           current = null;
+          progressActivity = null;
           if (active && owner.current === (task.run ? 'manual' : 'auto')) owner.current = null;
         }
       }
@@ -143,14 +163,59 @@ export function createBackgroundQueue({
     }
   }
   return {
-    add(games: Game[]) {
-      if (!active) return;
-      for (const game of games) {
-        if (!pending.has(game.id)) pending.set(game.id, { game });
-        jobs[game.id] ??= { state: 'queued', done: 0 };
+    pause() {
+      if (!active || paused) return;
+      paused = true;
+      pause?.();
+      onPaused?.(true);
+      if (current && jobs[current.game.id]) {
+        jobs[current.game.id] = { ...jobs[current.game.id], state: 'paused' };
+        publish();
       }
-      publish();
+      if (progressActivity) {
+        progressActivity = { ...progressActivity, title: 'Análisis en pausa', paused: true };
+        notify(progressActivity);
+      }
+    },
+    resume() {
+      if (!active || !paused) return;
+      paused = false;
+      resume?.();
+      onPaused?.(false);
+      if (current && jobs[current.game.id]) {
+        jobs[current.game.id] = { ...jobs[current.game.id], state: 'analysing' };
+        publish();
+      }
+      if (progressActivity) {
+        progressActivity = { ...progressActivity, title: 'Analizando partida', paused: false };
+        notify(progressActivity);
+      }
       void drain();
+    },
+    async add(games: Game[]) {
+      if (!active) return;
+      const candidates = games.filter((game) => {
+        if (pending.has(game.id) || checking.has(game.id)) return false;
+        checking.add(game.id);
+        return true;
+      });
+      try {
+        // A library scan is not a request to reanalyse a completed game.
+        // Check before publishing a queued job, even while another game runs.
+        const saved = await Promise.all(candidates.map(read));
+        if (!active) return;
+        let added = false;
+        candidates.forEach((game, index) => {
+          if (pending.has(game.id) || (saved[index]?.complete && compatible(saved[index]))) return;
+          pending.set(game.id, { game });
+          jobs[game.id] = { state: 'queued', done: 0 };
+          added = true;
+        });
+        if (added) publish();
+        void drain();
+      } finally {
+        for (const game of candidates) checking.delete(game.id);
+      }
     },
     analyze(game: Game, run: RunReview) {
       if (!active || pending.has(game.id)) return;
@@ -169,6 +234,7 @@ export function createBackgroundQueue({
     drain,
     stop() {
       active = false;
+      resume?.();
       pending.clear();
       for (const id of Object.keys(jobs)) delete jobs[id];
       publish();

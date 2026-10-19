@@ -9,6 +9,7 @@ test-results/
 .vienna-private/
 exports/
 vienna-*.png
+vienna-*.jpg
 docs/VERIFICATION.md
 docs/CATEGORY_AUDIT.md
 .env

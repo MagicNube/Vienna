@@ -1,5 +1,6 @@
 import type { Category, Color, Game, Review } from '../types';
 import { accuracy, categories } from './classification';
+import { isTrainingGame } from '../chess/gameKind';
 
 export const modeLabels: Record<string, string> = {
   bullet: 'Bullet',
@@ -18,14 +19,22 @@ export interface StatisticsFilter {
   days: number;
   color: 'all' | Color;
 }
+export function isStatisticsGame(game: Game) {
+  return !isTrainingGame(game);
+}
 export function ownColor(game: Game, username: string, fallback: Color): Color | null {
   const user = username.trim().toLowerCase();
   if (!user) return fallback;
   return game.white.toLowerCase() === user ? 'w' : game.black.toLowerCase() === user ? 'b' : null;
 }
-export function filteredEntries(entries: StatisticsEntry[], filter: StatisticsFilter, now: number) {
+export function filteredEntries<T extends StatisticsEntry>(
+  entries: T[],
+  filter: StatisticsFilter,
+  now: number,
+) {
   return entries.filter(
     ({ game, color }) =>
+      isStatisticsGame(game) &&
       (filter.mode === 'all' || game.timeClass === filter.mode) &&
       (filter.color === 'all' || color === filter.color) &&
       (!filter.days || (game.date >= now - filter.days * 86_400_000 && game.date <= now)),
@@ -36,7 +45,17 @@ export function gameResult({ game, color }: StatisticsEntry): 'win' | 'loss' | '
   if (!['1-0', '0-1'].includes(game.result)) return null;
   return (game.result === '1-0') === (color === 'w') ? 'win' : 'loss';
 }
+export function categoryGames(entries: StatisticsEntry[], category: Category) {
+  return entries.flatMap(({ game, color, review }) => {
+    if (!isStatisticsGame(game) || !review?.complete) return [];
+    const count = review.moves.filter(
+      (move) => move.color === color && move.category === category,
+    ).length;
+    return count ? [{ game, count }] : [];
+  });
+}
 export function statistics(entries: StatisticsEntry[]) {
+  entries = entries.filter(({ game }) => isStatisticsGame(game));
   const wins = entries.filter((e) => gameResult(e) === 'win').length;
   const losses = entries.filter((e) => gameResult(e) === 'loss').length;
   const draws = entries.filter((e) => gameResult(e) === 'draw').length;
@@ -78,6 +97,7 @@ export function statistics(entries: StatisticsEntry[]) {
     draws,
     finished,
     winrate: finished ? (100 * wins) / finished : null,
+    scoreRate: finished ? (100 * (wins + draws / 2)) / finished : null,
     complete: complete.length,
     partial: entries.filter((e) => e.review && !e.review.complete).length,
     counts,

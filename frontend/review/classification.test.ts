@@ -160,12 +160,66 @@ describe('límites publicados de pérdida de expectativa', () => {
   }
 });
 
+describe('gravedad según el contexto de la evaluación, para ambos colores', () => {
+  // Scores are from the mover's point of view. A similar centipawn loss has
+  // less impact when the game is already decided than around equality.
+  const cases = [
+    [0, -50, 'good'],
+    [0, -100, 'inaccuracy'],
+    [0, -200, 'mistake'],
+    [0, -250, 'blunder'],
+    [400, 300, 'inaccuracy'],
+    [800, 600, 'good'],
+    [-600, -800, 'good'],
+    [1400, 1000, 'excellent'],
+    [376, 343, 'good'],
+    [414, 125, 'blunder'],
+  ] as const;
+  for (const color of ['w', 'b'] as const) {
+    it.each(cases)(`${color}: %s → %s produce %s`, (bestCp, playedCp, category) => {
+      const tree = makeTree(color === 'w' ? '1. d4 *' : '1. e4 e5 *');
+      const before = tree.nodes.at(-2)!,
+        after = tree.nodes.at(-1)!;
+      const sign = color === 'w' ? 1 : -1;
+      const best = { ...line([500, 0, 500], [color === 'w' ? 'e2e4' : 'c7c5']), cp: bestCp * sign };
+      const played = { ...line([500, 0, 500], [after.uci]), cp: playedCp * sign, rank: 2 };
+      // Raw engine WDL and a later search must not override the comparison
+      // between two candidates from the same search.
+      const next = {
+        ...played,
+        cp: -2000 * sign,
+        wdl: color === 'w' ? [0, 0, 1000] : [1000, 0, 0],
+      } as EngineLine;
+      const result = classify(before, after, [best, played], next);
+      expect(result.category).toBe(category);
+      expect(result.loss).toBeGreaterThan(0);
+      expect(result.loss).toBeLessThan(0.5);
+    });
+  }
+});
+
 const sacrificeTree = makeTree(
   '1. e4 e5 2. Nf3 d6 3. d4 Bg4 4. dxe5 Bxf3 5. Qxf3 dxe5 6. Bc4 Nf6 7. Qb3 Qe7 8. Nc3 c6 9. Bg5 b5 10. Nxb5 *',
 );
 const sacrificeBefore = sacrificeTree.nodes.at(-2)!,
   sacrificeAfter = sacrificeTree.nodes.at(-1)!;
 const sacrificePv = ['c3b5', 'c6b5', 'c4b5', 'b8d7', 'e1c1'];
+
+it.each([15, 16])('Brillante exige profundidad 16 en la jugada y alternativas (%s)', (depth) => {
+  const best = { ...line([600, 400, 0], sacrificePv), depth };
+  const second = { ...line([580, 400, 20], ['c4d3']), depth, rank: 2 };
+  expect(classify(sacrificeBefore, sacrificeAfter, [best, second], best).category).toBe(
+    depth < 16 ? 'best' : 'brilliant',
+  );
+});
+
+it('Brillante no sustituye Buena en el límite de dos puntos de pérdida', () => {
+  const best = line([800, 0, 200], ['c4d3']);
+  const played = { ...line([780, 0, 220], sacrificePv), rank: 2 };
+  const result = classify(sacrificeBefore, sacrificeAfter, [best, played], played);
+  expect(result.loss).toBeCloseTo(0.02);
+  expect(result.category).toBe('good');
+});
 
 it('reconoce la aceptación aplazada de Nxb5 en una línea real de Stockfish 19', () => {
   // Stockfish 19, 5 s, 1 thread, 64 MB, MultiPV 4: depth 22. The queen
@@ -225,6 +279,22 @@ it('no usa alternativas de poca profundidad para conceder una categoría especia
   const best = line([600, 400, 0], sacrificePv);
   const second = { ...line([0, 800, 200], ['c4d3']), rank: 2, depth: 15 };
   expect(classify(sacrificeBefore, sacrificeAfter, [best, second], best).category).toBe('best');
+});
+
+it('una alternativa incompleta no desaparece de la comparación de Brillante o Genial', () => {
+  const best = line([600, 400, 0], sacrificePv);
+  const shallow = { ...line([580, 400, 20], ['c4d3']), rank: 2, depth: 15 };
+  const deep = { ...line([0, 800, 200], ['g5f6']), rank: 3 };
+  expect(classify(sacrificeBefore, sacrificeAfter, [best, shallow, deep], best).category).toBe(
+    'best',
+  );
+  const tree = makeTree('1. e4 *');
+  const primary = line([600, 400, 0]);
+  const close = { ...line([580, 400, 20], ['d2d4']), rank: 2, depth: 15 };
+  const inferior = { ...line([0, 800, 200], ['c2c4']), rank: 3 };
+  expect(classify(tree.nodes[0], tree.nodes[1], [primary, close, inferior], primary).category).toBe(
+    'best',
+  );
 });
 it('detecta el mismo sacrificio para negras, con WDL normalizado desde blancas', () => {
   const parts = sacrificeBefore.fen.split(' ');

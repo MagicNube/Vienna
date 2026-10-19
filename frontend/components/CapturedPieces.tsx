@@ -20,9 +20,8 @@ export function CapturedPieces({
         {pieces.map((piece, index) => (
           <img
             key={index}
-            src={`/pieces/${color === 'w' ? 'b' : 'w'}${piece}.svg`}
+            src={`/pieces/${color === 'w' ? 'captured/b' : 'w'}${piece}.svg`}
             alt=""
-            className={color === 'w' ? 'captured-black' : 'captured-white'}
           />
         ))}
       </span>

@@ -6,7 +6,7 @@ import type { Key } from '@lichess-org/chessground/types';
 import { legalDests, spanishSan } from '../chess/game';
 import { categories } from '../review/classification';
 import { MoveSymbol } from './MoveSymbol';
-import { engineArrows } from '../engine/lines';
+import { arrowBrushes, engineArrows, isInitialPosition } from '../engine/lines';
 import type { Category, EngineLine, PositionNode } from '../types';
 import '@lichess-org/chessground/assets/chessground.base.css';
 import '@lichess-org/chessground/assets/chessground.cburnett.css';
@@ -68,6 +68,7 @@ export function Board({
       drawable: {
         enabled: true,
         visible: true,
+        brushes: arrowBrushes,
         onChange: (shapes) => {
           // Retain native toggle/clear behavior and arrows; paint square annotations
           // underneath the pieces. The corresponding SVG circles are hidden in CSS.
@@ -103,8 +104,10 @@ export function Board({
     api.current?.setShapes([]);
   }, [node, orientation, interactive]);
   useEffect(() => {
-    api.current?.setAutoShapes(engineArrows(lines, arrows, secondArrow, previewMove));
-  }, [lines, arrows, secondArrow, previewMove]);
+    api.current?.setAutoShapes(
+      isInitialPosition(node) ? [] : engineArrows(lines, arrows, secondArrow, previewMove),
+    );
+  }, [lines, arrows, secondArrow, previewMove, node]);
   const destination = node.uci?.slice(2, 4);
   const file = destination ? destination.charCodeAt(0) - 97 : 0;
   const rank = destination ? Number(destination[1]) - 1 : 0;
@@ -116,7 +119,7 @@ export function Board({
         <div
           ref={el}
           className="chessboard"
-          aria-label={`Tablero. Juegan ${new Chess(node.fen).turn() === 'w' ? 'blancas' : 'negras'}`}
+          aria-label={`Tablero. Juegan ${node.fen.split(' ')[1] === 'w' ? 'blancas' : 'negras'}`}
         />
         {destination && category && !promotion && (
           <div

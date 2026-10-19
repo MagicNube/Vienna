@@ -1,36 +1,49 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Chess } from 'chess.js';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { applyAppearance } from './appearance';
 import { Continuations } from './components/Continuations';
 import { Board } from './components/Board';
 import { Icon } from './components/Icon';
 import { EvalGraph } from './components/EvalGraph';
+import { EvaluationBar } from './components/EvaluationBar';
 import { Modal } from './components/Modal';
+import { WINDOW_ERROR_EVENT } from './components/WindowTitleBar';
 import { SettingsPanel } from './components/SettingsPanel';
+import { SupportLink } from './components/SupportLink';
+import { AnalysisLevelPicker } from './components/AnalysisLevelPicker';
 import { GameLibrary, timeControl } from './components/GameLibrary';
 import { ReviewSummary } from './components/ReviewSummary';
-import { SummaryFooter } from './components/SummaryFooter';
+import { MoveExplanation } from './components/MoveExplanation';
+import { ReturnControl } from './components/ReturnControl';
 import { ProfilePanel } from './components/ProfilePanel';
 import { profileInitials } from './profile/image';
 import { MoveList } from './components/MoveList';
 import { RecentGame } from './components/RecentGame';
 import { Statistics } from './components/Statistics';
-import { BackgroundNotice } from './components/BackgroundNotice';
+import { StatisticsCache } from './review/statisticsCache';
+import { isStatisticsGame, ownColor as statisticsColor } from './review/statistics';
+import { NotificationCenter } from './components/NotificationCenter';
+import { BrandMark } from './components/BrandMark';
+import { analysisLevelLabel, analysisLevelName } from './review/analysisLevel';
 import { CapturedPieces } from './components/CapturedPieces';
-import { ErrorNotice } from './components/ErrorNotice';
 import { positionMaterial } from './chess/material';
 import { distinctLines } from './engine/lines';
-import { savedAnalysis } from './engine/savedAnalysis';
-import { evaluationSide, evaluationDescription } from './engine/evaluation';
+import { savedAnalysis, reviewMatchesOptions } from './engine/savedAnalysis';
 import { withBookMove } from './chess/openings';
 import { playChessSound, soundForMove } from './audio/chessSounds';
-import { cycleCategory, type CategoryTour } from './review/categoryTour';
+import { cycleCategory, pauseCategoryTour, type CategoryTour } from './review/categoryTour';
+import { mainOrigin, returnContext } from './review/returnNavigation';
 import { freeLine } from './chess/freeBoard';
+import { navigationTargets, type NavigationDirection } from './chess/navigation';
 import { useAutoReview } from './review/useAutoReview';
 import { useReviewIndex } from './review/useReviewIndex';
-import { addMove, importPgn, makeTree, pathTo, playerColor } from './chess/game';
+import { useSeenGames } from './database/useSeenGames';
+import { SeenControl } from './components/SeenControl';
+import { addMove, importPgn, makeTree, playerColor } from './chess/game';
 import { downloadGames } from './api/chesscom';
+import { accountGames, updatedGames } from './api/accountGames';
+import { isTrainingGame } from './chess/gameKind';
 import { repository } from './database/repository';
-import { engine, expected, score } from './engine/EngineService';
+import { engine } from './engine/EngineService';
 import { GameReviewService, REVIEW_VERSION } from './review/GameReviewService';
 import { classify } from './review/classification';
 import { upgradeReview } from './review/upgradeReview';
@@ -51,12 +64,12 @@ type BoardSession = {
   game?: Game;
   tree: GameTree;
   nodeId: string;
-  returnId: string;
   review: Review | null;
   orientation: 'w' | 'b';
   tip?: string;
 };
 export function App() {
+  const statisticsCache = useRef(new StatisticsCache());
   const [recentNow, setRecentNow] = useState(Date.now);
   useEffect(() => {
     const timer = setInterval(() => setRecentNow(Date.now()), 60_000);
@@ -75,7 +88,6 @@ export function App() {
   const freeSession = useRef<BoardSession>({
     tree: emptyTree,
     nodeId: 'm0',
-    returnId: 'm0',
     review: null,
     orientation: 'w',
   });
@@ -84,8 +96,7 @@ export function App() {
     [games, setGames] = useState<Game[]>([]),
     [game, setGame] = useState<Game>();
   const [tree, setTree] = useState<GameTree>(emptyTree),
-    [nodeId, setNodeId] = useState('m0'),
-    [returnId, setReturnId] = useState('m0');
+    [nodeId, setNodeId] = useState('m0');
   const [orientation, setOrientation] = useState<'w' | 'b'>('w'),
     [analysis, setAnalysis] = useState<{ key: string; lines: EngineLine[] }>({
       key: '',
@@ -110,7 +121,17 @@ export function App() {
   const [pgn, setPgn] = useState(''),
     [username, setUsername] = useState(''),
     [importing, setImporting] = useState(false);
+  const [categoryLibrary, setCategoryLibrary] = useState<{
+    category: Category;
+    counts: Record<string, number>;
+  } | null>(null);
   const [reviewTime, setReviewTime] = useState(500);
+  useLayoutEffect(() => applyAppearance(settings), [settings.appearance, settings.density]);
+  const libraryGames = useMemo(
+    () => accountGames(games, settings.username),
+    [games, settings.username],
+  );
+  const recentGames = libraryGames.filter((game) => !isTrainingGame(game)).slice(0, 5);
   const service = useRef(new GameReviewService()),
     loadToken = useRef(0),
     fileInput = useRef<HTMLInputElement>(null),
@@ -119,9 +140,27 @@ export function App() {
   const reviewOwner = useRef<'manual' | 'auto' | null>(null);
   const node = tree.nodes.find((n) => n.id === nodeId) ?? tree.nodes[0];
   const storedAnalysis = savedAnalysis(node, review, freeMode);
-  const activeFreeLine = freeLine(tree, node.id, freeTip);
+  const activeFreeLine = useMemo(
+    () => (freeMode ? freeLine(tree, node.id, freeTip) : []),
+    [freeMode, tree, node.id, freeTip],
+  );
+  const navigation = useMemo(
+    () => navigationTargets(tree, node, freeMode ? activeFreeLine : undefined),
+    [tree, node, freeMode, activeFreeLine],
+  );
+  const turn = node.fen.split(' ')[1];
   const positionScope = `${game?.id ?? 'free'}:${tree.rootFen}`;
   const positionKey = `${positionScope}:${node.id}:${node.fen}`;
+  const moveListRatings = useMemo(() => {
+    const nodes = new Map(tree.nodes.map((n) => [n.id, n]));
+    return Object.fromEntries(
+      tree.nodes.map((n) => {
+        const parent = n.parent ? nodes.get(n.parent) : undefined;
+        const rating = moveRatings[`${positionScope}:${n.id}:${n.fen}`];
+        return [n.id, parent ? withBookMove(parent, n, rating) : rating];
+      }),
+    );
+  }, [tree, moveRatings, positionScope]);
   const options: EngineOptions = useMemo(
     () => ({
       threads: settings.threads || Math.min(8, Math.max(1, Math.floor((status?.cpus ?? 4) / 2))),
@@ -142,23 +181,23 @@ export function App() {
   const reportError = useCallback((e: unknown) => {
     if (!String(e).includes('cancelled')) setError(String(e).replace(/^Error: /, ''));
   }, []);
+  useEffect(() => {
+    const handle = (event: Event) => reportError((event as CustomEvent<string>).detail);
+    window.addEventListener(WINDOW_ERROR_EVENT, handle);
+    return () => window.removeEventListener(WINDOW_ERROR_EVENT, handle);
+  }, [reportError]);
   const autoOptions = useMemo(
     () => ({
       threads: options.threads,
       hash: options.hash,
       multiPv: options.multiPv,
       movetime: settings.autoReviewTime,
-      depth: null,
+      depth: options.depth,
     }),
-    [options.threads, options.hash, options.multiPv, settings.autoReviewTime],
+    [options.threads, options.hash, options.multiPv, options.depth, settings.autoReviewTime],
   );
   function updateGames(next: Game[]) {
-    setGames((previous) =>
-      previous.length === next.length &&
-      previous.every((game, i) => game.id === next[i].id && game.pgn === next[i].pgn)
-        ? previous
-        : next,
-    );
+    setGames((previous) => updatedGames(previous, next));
   }
   const autoReview = useAutoReview({
     enabled: ready && settings.autoReview && !!status?.available,
@@ -169,20 +208,39 @@ export function App() {
     owner: reviewOwner,
     onGames: updateGames,
     onReview: (id, result) => {
+      if (result.complete) statisticsCache.current.updateReview(id, result);
       if (result.complete) latestReviews.current.set(id, result);
       if (result.complete) setReviewRevision((n) => n + 1);
-      if (selectedGameId.current === id) setReview(result);
+      if (selectedGameId.current === id) {
+        setReview(result);
+        if (result.complete) setReviewTime(result.options.movetime);
+      }
       if (analysisSession.current?.game?.id === id) analysisSession.current.review = result;
     },
   });
 
-  const reviewIndex = useReviewIndex(games, reviewRevision);
+  const reviewIndex = useReviewIndex(games, reviewRevision, reportError);
+  useEffect(() => {
+    if (!error) return;
+    autoReview.reportError(error);
+    setError('');
+  }, [error, autoReview.reportError]);
+  useEffect(() => {
+    if (ready && status && !status.available)
+      autoReview.reportError('No se encuentra Stockfish 19. Revisa la instalación del motor.');
+  }, [ready, status?.available, autoReview.reportError]);
+  useEffect(() => {
+    autoReview.viewGame(
+      ready && view === 'analysis' && !freeMode && !modal ? (game?.id ?? null) : null,
+    );
+  }, [ready, view, freeMode, modal, game?.id, autoReview.viewGame]);
+  const seenGames = useSeenGames(reportError, reviewIndex.reviewed, reviewIndex.loading);
   const reviewJobs = autoReview.jobs;
   const selectedReviewJob = !freeMode && game ? reviewJobs[game.id] : undefined;
   const selectedManualJob = selectedReviewJob?.manual ? selectedReviewJob : undefined;
   const selectedAutoJob = selectedReviewJob?.manual ? undefined : selectedReviewJob;
   const visibleProgress =
-    selectedReviewJob?.state === 'analysing'
+    selectedReviewJob && selectedReviewJob.state !== 'queued'
       ? { done: selectedReviewJob.done, total: selectedReviewJob.total ?? tree.mainIds.length }
       : null;
   async function selectGame(g: Game, config = settings) {
@@ -195,7 +253,7 @@ export function App() {
     ]);
     if (token !== loadToken.current) return;
     if (freeMode) {
-      freeSession.current = { tree, nodeId, returnId, review: null, orientation, tip: freeTip };
+      freeSession.current = { tree, nodeId, review: null, orientation, tip: freeTip };
       await repository.put('settings', 'freeBoard', freeSession.current);
       if (token !== loadToken.current) return;
     }
@@ -207,16 +265,18 @@ export function App() {
     const selectedTree = saved?.rootFen === base.rootFen ? saved : base;
     setTree(selectedTree);
     setNodeId('m0');
-    setReturnId('m0');
     setAnalysis({ key: '', lines: [] });
     setEvaluation(undefined);
     const latest = latestReviews.current.get(g.id) ?? stored;
     const restored =
       latest?.version === REVIEW_VERSION ? upgradeReview(selectedTree, latest) : null;
     setReview(restored);
+    if (restored?.complete) statisticsCache.current.updateReview(g.id, restored);
+    setReviewTime(restored?.complete ? restored.options.movetime : config.reviewTime);
     if (restored && restored !== latest)
       void repository.put('reviews', g.id, restored).catch(reportError);
     setOrientation(playerColor(g, config.username));
+    setCategoryLibrary(null);
     setModal(null);
     setTab('review');
     setError('');
@@ -231,18 +291,16 @@ export function App() {
     }
     setSyncing(true);
     setError('');
+    const accountChanged =
+      config.username.trim().toLowerCase() !== settings.username.trim().toLowerCase();
     try {
-      const existing = await repository.list<Game>('games');
-      const known = new Set(existing.map((game) => game.id));
       const downloaded = await downloadGames(config.username);
       for (const g of downloaded) await repository.put('games', g.id, g);
       const all = await repository.list<Game>('games');
-      await autoReview.scan(
-        existing.length ? downloaded.filter((game) => !known.has(game.id)) : [],
-      );
+      await autoReview.scan();
       updateGames(all.sort((a, b) => b.date - a.date));
       setModal((current) => (current === 'connect' ? 'library' : current));
-      if (!selectedGameId.current && !freeMode && downloaded[0])
+      if ((!selectedGameId.current || accountChanged) && !freeMode && downloaded[0])
         await selectGame(downloaded[0], config);
     } catch (e) {
       reportError(e);
@@ -250,32 +308,54 @@ export function App() {
       setSyncing(false);
     }
   }
+  async function openActivityGame(id: string) {
+    const selected =
+      games.find((game) => game.id === id) ?? (await repository.get<Game>('games', id));
+    if (!selected) throw Error('No se encuentra esta partida en tu biblioteca.');
+    await selectGame(selected);
+    setGames((previous) =>
+      previous.some((game) => game.id === id)
+        ? previous
+        : [...previous, selected].sort((a, b) => b.date - a.date),
+    );
+  }
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
     (async () => {
       try {
-        const [saved, all, st, last, savedFree, fourLineDefault] = await Promise.all([
-          repository.get<Settings>('settings', 'preferences'),
-          repository.list<Game>('games'),
-          engine.status(),
-          repository.get<string>('settings', 'lastGame'),
-          repository.get<BoardSession>('settings', 'freeBoard'),
-          repository.get<boolean>('settings', 'fourLineDefault'),
-        ]);
+        const [saved, all, st, last, savedFree, fourLineDefault, fiveLineDefault] =
+          await Promise.all([
+            repository.get<Settings>('settings', 'preferences'),
+            repository.list<Game>('games'),
+            engine.status(),
+            repository.get<string>('settings', 'lastGame'),
+            repository.get<BoardSession>('settings', 'freeBoard'),
+            repository.get<boolean>('settings', 'fourLineDefault'),
+            repository.get<boolean>('settings', 'fiveLineDefault'),
+          ]);
         if (savedFree?.tree?.nodes.some((n) => n.id === savedFree.nodeId))
           freeSession.current = savedFree;
         const config = { ...defaultSettings, ...saved };
+        // Remove the obsolete preference when saving settings from older builds.
+        Reflect.deleteProperty(config, 'theme');
         if (!fourLineDefault) {
           if (config.multiPv === 3) config.multiPv = 4;
           await repository.put('settings', 'fourLineDefault', true);
+        }
+        if (!fiveLineDefault) {
+          if (config.multiPv === 4) config.multiPv = 5;
+          // Persist the migration before its marker, preserving custom limits.
+          await repository.put('settings', 'preferences', config);
+          await repository.put('settings', 'fiveLineDefault', true);
         }
         setSettings(config);
         setReviewTime(config.reviewTime);
         setUsername(config.username);
         setStatus(st);
         setGames(all.sort((a, b) => b.date - a.date));
-        const selected = all.find((g) => g.id === last) ?? all[0];
+        const ownGames = accountGames(all, config.username);
+        const selected = ownGames.find((g) => g.id === last) ?? ownGames[0];
         if (selected) await selectGame(selected, config);
         setReady(true);
         if (config.username) void syncGames(config);
@@ -287,14 +367,15 @@ export function App() {
     })();
   }, []);
   useEffect(() => {
-    document.documentElement.classList.add('theme-switch');
-    document.documentElement.dataset.theme = settings.theme;
-    void document.documentElement.offsetHeight;
-    const frame = requestAnimationFrame(() =>
-      document.documentElement.classList.remove('theme-switch'),
+    if (!ready) return;
+    const scope = libraryGames.filter(
+      (g) => isStatisticsGame(g) && statisticsColor(g, settings.username, 'w'),
     );
-    return () => cancelAnimationFrame(frame);
-  }, [settings.theme]);
+    const timer = setTimeout(() => {
+      void statisticsCache.current.load(scope).catch(() => {});
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [ready, libraryGames, settings.username, reviewRevision]);
   useEffect(() => {
     if (!ready) return;
     const timer = setTimeout(
@@ -326,10 +407,30 @@ export function App() {
         completedPositions.current.get(parentKey) ??
         (parent?.main ? review?.positions[parent.id]?.lines : undefined);
       const commitRating = (updates: EngineLine[]) => {
+        const previousNode = tree.nodes.find((n) => n.id === parent?.parent);
+        const previousLines =
+          previousNode &&
+          (completedPositions.current.get(
+            `${positionScope}:${previousNode.id}:${previousNode.fen}`,
+          ) ??
+            (previousNode.main ? review?.positions[previousNode.id]?.lines : undefined));
         if (parent && before?.[0] && updates[0])
           setMoveRatings((previous) => ({
             ...previous,
-            [positionKey]: withBookMove(parent, node, classify(parent, node, before!, updates[0]))!,
+            [positionKey]: withBookMove(
+              parent,
+              node,
+              classify(
+                parent,
+                node,
+                before!,
+                updates[0],
+                undefined,
+                previousNode && previousLines
+                  ? { node: previousNode, lines: previousLines }
+                  : undefined,
+              ),
+            )!,
           }));
       };
       try {
@@ -398,21 +499,21 @@ export function App() {
   ]);
   useEffect(() => {
     if (!freeMode || !ready) return;
-    const snapshot = { tree, nodeId, returnId, review: null, orientation, tip: freeTip };
+    const snapshot = { tree, nodeId, review: null, orientation, tip: freeTip };
     freeSession.current = snapshot;
     const timer = setTimeout(
       () => repository.put('settings', 'freeBoard', snapshot).catch(reportError),
       300,
     );
     return () => clearTimeout(timer);
-  }, [freeMode, ready, tree, nodeId, returnId, orientation, freeTip]);
+  }, [freeMode, ready, tree, nodeId, orientation, freeTip]);
   function restoreSession(snapshot: BoardSession) {
     setGame(snapshot.game);
     selectedGameId.current = snapshot.game?.id;
     setTree(snapshot.tree);
     setNodeId(snapshot.nodeId);
-    setReturnId(snapshot.returnId);
     setReview(snapshot.review);
+    if (snapshot.review?.complete) setReviewTime(snapshot.review.options.movetime);
     setOrientation(snapshot.orientation);
     setFreeTip(snapshot.tip ?? snapshot.nodeId);
     setAnalysis({ key: '', lines: [] });
@@ -430,18 +531,17 @@ export function App() {
     await engine.cancel();
     if (token !== loadToken.current) return;
     if (mode === 'free' && !freeMode) {
-      analysisSession.current = { game, tree, nodeId, returnId, review, orientation };
+      analysisSession.current = { game, tree, nodeId, review, orientation };
       restoreSession(freeSession.current);
       setTab('moves');
     } else if (mode === 'analysis' && freeMode) {
-      freeSession.current = { tree, nodeId, returnId, review: null, orientation, tip: freeTip };
+      freeSession.current = { tree, nodeId, review: null, orientation, tip: freeTip };
       await repository.put('settings', 'freeBoard', freeSession.current);
       if (token !== loadToken.current) return;
       restoreSession(
         analysisSession.current ?? {
           tree: emptyTree,
           nodeId: 'm0',
-          returnId: 'm0',
           review: null,
           orientation: 'w',
         },
@@ -463,8 +563,15 @@ export function App() {
       setTour(null);
     }
   }
+  const activeReturn = returnContext(tree, node, tour, freeMode);
+  const selectedTour = tour?.paused ? null : tour;
+  function returnToOrigin() {
+    if (!activeReturn) return;
+    go(activeReturn.target.id);
+    if (activeReturn.kind === 'category') setTour(null);
+  }
   function go(id: string, categoryNavigation = false) {
-    if (!categoryNavigation && tour && id === tour.origin) setTour(null);
+    if (!categoryNavigation) setTour((current) => pauseCategoryTour(current, id));
     if (settings.sounds && id !== node.id) {
       const target = tree.nodes.find((n) => n.id === id);
       const parent = tree.nodes.find((n) => n.id === target?.parent);
@@ -478,54 +585,17 @@ export function App() {
     setNodeId(id);
     setError('');
   }
-  function navigate(direction: 'first' | 'prev' | 'next' | 'last') {
-    if (freeMode) {
-      const ids = ['m0', ...activeFreeLine.map((n) => n.id)];
-      const index = ids.indexOf(node.id);
-      go(
-        ids[
-          direction === 'first'
-            ? 0
-            : direction === 'last'
-              ? ids.length - 1
-              : Math.max(0, Math.min(ids.length - 1, index + (direction === 'next' ? 1 : -1)))
-        ],
-      );
-      return;
-    }
-    if (node.main) {
-      const i = tree.mainIds.indexOf(node.id);
-      go(
-        tree.mainIds[
-          direction === 'first'
-            ? 0
-            : direction === 'last'
-              ? tree.mainIds.length - 1
-              : Math.max(0, Math.min(tree.mainIds.length - 1, i + (direction === 'next' ? 1 : -1)))
-        ],
-      );
-    } else {
-      const path = pathTo(tree, node.id);
-      if (direction === 'first') {
-        const first = path.find((n) => !n.main);
-        go(first?.parent ?? 'm0');
-      } else if (direction === 'prev') go(node.parent ?? 'm0');
-      else {
-        let cursor = node;
-        let next = tree.nodes.find((n) => n.parent === cursor.id && !n.main);
-        while (next) {
-          cursor = next;
-          if (direction === 'next') break;
-          next = tree.nodes.find((n) => n.parent === cursor.id && !n.main);
-        }
-        go(cursor.id);
-      }
-    }
+  function navigate(direction: NavigationDirection) {
+    const target = navigation[direction];
+    if (target) go(target);
   }
   useEffect(() => {
     const handle = (e: KeyboardEvent) => {
       if (
         modal ||
+        document.querySelector(
+          '#notification-panel:popover-open, .move-explanation-popover:popover-open',
+        ) ||
         view === 'statistics' ||
         ['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName) ||
         e.altKey ||
@@ -535,10 +605,7 @@ export function App() {
         return;
       if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'Escape'].includes(e.key)) {
         e.preventDefault();
-        if (e.key === 'Escape' && tour) {
-          go(tour.origin);
-          setTour(null);
-        } else if (e.key === 'Escape') go(returnId);
+        if (e.key === 'Escape') returnToOrigin();
         else navigate(e.key === 'ArrowLeft' ? 'prev' : e.key === 'ArrowRight' ? 'next' : 'first');
       }
     };
@@ -556,13 +623,14 @@ export function App() {
           settings.soundVolume,
           settings.customSounds,
         );
-      if (node.main && !result.node.main) setReturnId(node.id);
       setTree(result.tree);
       setNodeId(result.node.id);
-      if (freeMode)
+      if (freeMode) {
+        setFreeUndo(null);
         setFreeTip(
           freeLine(result.tree, result.node.id, result.node.id).at(-1)?.id ?? result.node.id,
         );
+      }
       if (!result.node.main && !freeMode) setTab('moves');
       if (game) repository.put('variants', game.id, result.tree).catch(reportError);
     } catch (e) {
@@ -598,17 +666,22 @@ export function App() {
       setError('El archivo supera los 20 MB. Divide el PGN en archivos más pequeños.');
       return;
     }
-    await doImport(await file.text());
+    try {
+      await doImport(await file.text());
+    } catch (error) {
+      reportError(error);
+    }
   }
+  const reviewMatchesSelection = reviewMatchesOptions(
+    review,
+    { ...options, movetime: reviewTime },
+    status?.engineId,
+  );
   function analyzeGame() {
-    if (!game || reviewJobs[game.id]) return;
+    if (!game || reviewJobs[game.id] || reviewMatchesSelection) return;
     setError('');
     setTab('review');
     autoReview.analyze(game, tree, { ...options, movetime: reviewTime });
-  }
-  function queueGame(g: Game) {
-    if (reviewJobs[g.id] || reviewIndex.reviewed.has(g.id) || !status?.available) return;
-    autoReview.analyze(g, makeTree(g.pgn), autoOptions);
   }
   const engineRating =
     (node.main ? review?.moves.find((m) => m.ply === node.ply) : null) ?? moveRatings[positionKey];
@@ -619,26 +692,31 @@ export function App() {
   );
   const material = useMemo(() => positionMaterial(tree, node.id), [tree, node.id]);
   const displayedEvaluation = storedAnalysis?.lines[0] ?? evaluation;
-  const whitePercent = displayedEvaluation
-    ? Math.max(3, Math.min(97, expected(displayedEvaluation, 'w') * 100))
-    : 50;
+  const ownColor =
+    game && settings.username.trim()
+      ? game.white.toLowerCase() === settings.username.trim().toLowerCase()
+        ? 'w'
+        : game.black.toLowerCase() === settings.username.trim().toLowerCase()
+          ? 'b'
+          : undefined
+      : undefined;
   const topColor = orientation === 'w' ? 'b' : 'w',
     bottomColor = orientation;
-  function resetFreeBoard(pgn: string) {
-    setFreeUndo({ tree, nodeId, returnId, review: null, orientation, tip: freeTip });
-    const next = makeTree(pgn);
-    setTree(next);
-    setNodeId(next.mainIds.at(-1)!);
-    setFreeTip(next.mainIds.at(-1)!);
-    setReturnId('m0');
-    setTour(null);
-    setReview(null);
+  function resetFreeBoard() {
+    // Resetting an already empty board preserves the last useful undo snapshot.
+    if (tree.nodes.length === 1 && tree.rootFen === emptyTree.rootFen) return;
+    setFreeUndo({ tree, nodeId, review: null, orientation, tip: freeTip });
+    restoreSession({ tree: makeTree('*'), nodeId: 'm0', review: null, orientation, tip: 'm0' });
+    setPreview(null);
+    setError('');
     setTab('moves');
   }
   function player(color: 'w' | 'b') {
     return (
       <div className="player">
-        <span className={`avatar ${color}`}>{color === 'w' ? '♔' : '♚'}</span>
+        <span className={`avatar ${color}`} aria-hidden="true">
+          <img src={`/pieces/player/${color}k.svg`} alt="" />
+        </span>
         <div className="player-identity">
           <strong>
             {game
@@ -661,7 +739,7 @@ export function App() {
           </span>
         </div>
         <CapturedPieces color={color} material={material} />
-        <div className={`player-side ${new Chess(node.fen).turn() === color ? 'to-move' : ''}`}>
+        <div className={`player-side ${turn === color ? 'to-move' : ''}`}>
           <span>{color === 'w' ? 'Blancas' : 'Negras'}</span>
           <span className="turn-label">Turno</span>
         </div>
@@ -681,17 +759,35 @@ export function App() {
       }}
     >
       <aside className="sidebar">
-        <a className="brand" href="#" onClick={(e) => e.preventDefault()} aria-label="Vienna">
-          <img className="brand-mark" src="/vienna.svg" alt="" />
-          <span>Vienna</span>
-        </a>
+        <div className="sidebar-header">
+          <a className="brand" href="#" onClick={(e) => e.preventDefault()} aria-label="Vienna">
+            <BrandMark />
+            <span>Vienna</span>
+          </a>
+          <NotificationCenter
+            items={autoReview.notifications}
+            queued={Object.values(reviewJobs).filter((job) => job.state === 'queued').length}
+            modal={modal}
+            onView={(id) => {
+              autoReview.viewGame(id);
+              void openActivityGame(id).catch(reportError);
+            }}
+            onDismiss={autoReview.dismiss}
+            paused={autoReview.paused}
+            onPause={autoReview.pause}
+            onResume={autoReview.resume}
+          />
+        </div>
         <nav>
           <button
             className={modal === 'library' ? 'active' : ''}
-            onClick={() => setModal('library')}
+            onClick={() => {
+              setCategoryLibrary(null);
+              setModal('library');
+            }}
           >
             <Icon name="grid" />
-            Mis partidas<span className="nav-count">{games.length}</span>
+            Mis partidas<span className="nav-count">{libraryGames.length}</span>
           </button>
           <button
             className={modal !== 'library' && view === 'analysis' ? 'active' : ''}
@@ -719,6 +815,23 @@ export function App() {
           </button>
         </nav>
         <div className="sidebar-collection">
+          {game && !freeMode && (
+            <section className="sidebar-current-game" aria-label="Partida en análisis">
+              <div className="recent-heading-row">
+                <span className="recent-heading">Analizando</span>
+              </div>
+              <RecentGame
+                game={game}
+                username={settings.username}
+                now={recentNow}
+                reviewed={reviewIndex.reviewed.has(game.id) || !!review?.complete}
+                seen={seenGames.ids.has(game.id)}
+                job={reviewJobs[game.id]}
+                selected={false}
+                onSelect={() => openBoard('analysis').catch(reportError)}
+              />
+            </section>
+          )}
           <div className="recent-heading-row">
             <span className="recent-heading">Últimas 5 partidas</span>
             <button
@@ -732,16 +845,15 @@ export function App() {
               <Icon name="refresh" size={16} />
             </button>
           </div>
-          {games.slice(0, 5).map((g) => (
+          {recentGames.map((g) => (
             <RecentGame
               key={g.id}
               game={g}
               username={settings.username}
               now={recentNow}
               reviewed={reviewIndex.reviewed.has(g.id)}
+              seen={seenGames.ids.has(g.id)}
               job={reviewJobs[g.id]}
-              onAnalyze={() => queueGame(g)}
-              canAnalyze={!!status?.available && !reviewIndex.loading}
               selected={game?.id === g.id && !freeMode}
               onSelect={() => selectGame(g).catch(reportError)}
             />
@@ -798,10 +910,18 @@ export function App() {
       <main>
         {view === 'statistics' ? (
           <Statistics
-            games={games}
+            games={libraryGames}
             username={settings.username}
             revision={reviewRevision}
+            cache={statisticsCache.current}
             onError={reportError}
+            onCategoryGames={(category, matches) => {
+              setCategoryLibrary({
+                category,
+                counts: Object.fromEntries(matches.map(({ game, count }) => [game.id, count])),
+              });
+              setModal('library');
+            }}
           />
         ) : (
           <>
@@ -837,50 +957,18 @@ export function App() {
                   )}
                 </p>
               </div>
-              {freeMode && (
-                <button
-                  className="icon-button"
-                  aria-label={freeUndo ? 'Deshacer nuevo tablero' : 'Nuevo tablero'}
-                  title={freeUndo ? 'Deshacer nuevo tablero' : 'Nuevo tablero'}
-                  onClick={() => {
-                    if (freeUndo) {
-                      restoreSession(freeUndo);
-                      setFreeUndo(null);
-                    } else resetFreeBoard('*');
-                  }}
-                >
-                  <Icon name={freeUndo ? 'undo' : 'refresh'} size={18} />
-                </button>
-              )}
             </div>
             <div className="workspace">
               <section className="board-column">
-                <div className="board-player">
-                  {player(topColor)}
-                  <span className="result-pill">
-                    {game?.result === '*' ? 'En estudio' : game?.result || 'Tablero libre'}
-                  </span>
-                </div>
+                <div className="board-player">{player(topColor)}</div>
                 <div className={`board-with-eval ${!settings.evaluation ? 'no-eval' : ''}`}>
                   {settings.evaluation && (
-                    <div
-                      className="evaluation-bar"
-                      aria-label={`Evaluación desde blancas: ${score(displayedEvaluation)}. ${evaluationDescription(displayedEvaluation)}`}
-                      title="+ favorece a blancas; − favorece a negras"
-                      aria-busy={engineBusy}
-                    >
-                      <div className="white-eval" style={{ height: `${whitePercent}%` }} />
-                      <span
-                        className={
-                          evaluationSide(displayedEvaluation) === 'w' ||
-                          !evaluationSide(displayedEvaluation)
-                            ? 'on-white'
-                            : ''
-                        }
-                      >
-                        {score(displayedEvaluation)}
-                      </span>
-                    </div>
+                    <EvaluationBar
+                      evaluation={displayedEvaluation}
+                      orientation={orientation}
+                      ownColor={ownColor}
+                      busy={engineBusy}
+                    />
                   )}
                   <div className="board-area">
                     <Board
@@ -913,13 +1001,26 @@ export function App() {
                       <Icon name="flip" size={18} />
                     </button>
                     <button
-                      className={`icon-button ${settings.arrows ? 'enabled' : ''}`}
-                      title="Flechas del motor"
-                      aria-label="Flechas del motor"
+                      className={`icon-button engine-arrow-toggle best-arrow ${settings.arrows ? 'enabled' : ''}`}
+                      title="Flecha de la mejor jugada"
+                      aria-label="Flecha de la mejor jugada"
                       aria-pressed={settings.arrows}
                       onClick={() => setSettings({ ...settings, arrows: !settings.arrows })}
                     >
                       <Icon name="arrow" size={18} />
+                      <span aria-hidden="true">1</span>
+                    </button>
+                    <button
+                      className={`icon-button engine-arrow-toggle second-arrow ${settings.secondArrow ? 'enabled' : ''}`}
+                      title="Flecha de la segunda mejor jugada"
+                      aria-label="Flecha de la segunda mejor jugada"
+                      aria-pressed={settings.secondArrow}
+                      onClick={() =>
+                        setSettings({ ...settings, secondArrow: !settings.secondArrow })
+                      }
+                    >
+                      <Icon name="arrow" size={16} />
+                      <span aria-hidden="true">2</span>
                     </button>
                   </div>
                   <div className="navigation">
@@ -936,25 +1037,63 @@ export function App() {
                           ][i]
                         }
                         title={['Inicio (↑)', 'Anterior (←)', 'Siguiente (→)', 'Final'][i]}
+                        disabled={!navigation[dir]}
                         onClick={() => navigate(dir)}
                       >
                         <Icon name={['first', 'left', 'right', 'last'][i]} />
                       </button>
                     ))}
-                    <button
-                      className="icon-button board-return"
-                      disabled={freeMode || node.main}
-                      aria-label="Volver a la jugada"
-                      title="Volver a la jugada de origen (Esc)"
-                      onClick={() => go(returnId)}
-                    >
-                      <Icon name="undo" />
-                    </button>
+                    {!freeMode && (
+                      <ReturnControl context={activeReturn} onReturn={returnToOrigin} />
+                    )}
                   </div>
-                  <span className="ply-counter">
-                    {node.ply}
-                    <span> / {freeMode ? activeFreeLine.length : tree.mainIds.length - 1}</span>
-                  </span>
+                  <div className="board-status-actions">
+                    {freeMode ? (
+                      <>
+                        <button
+                          className="icon-button"
+                          aria-label="Reiniciar tablero"
+                          title="Reiniciar tablero"
+                          onClick={resetFreeBoard}
+                        >
+                          <Icon name="refresh" size={18} />
+                        </button>
+                        <button
+                          className="icon-button"
+                          aria-label="Deshacer reinicio"
+                          title="Deshacer reinicio"
+                          disabled={
+                            !freeUndo ||
+                            tree.nodes.length !== 1 ||
+                            tree.rootFen !== emptyTree.rootFen
+                          }
+                          onClick={() => {
+                            if (freeUndo) {
+                              restoreSession(freeUndo);
+                              setPreview(null);
+                              setFreeUndo(null);
+                            }
+                          }}
+                        >
+                          <Icon name="undo" size={18} />
+                        </button>
+                      </>
+                    ) : (
+                      game && (
+                        <SeenControl
+                          seen={seenGames.ids.has(game.id)}
+                          analysed={reviewIndex.reviewed.has(game.id)}
+                          loadingAnalyses={reviewIndex.loading}
+                          disabled={seenGames.loading || seenGames.pending.has(game.id)}
+                          onToggle={() => void seenGames.toggle(game.id)}
+                        />
+                      )
+                    )}
+                    <span className="ply-counter">
+                      {node.ply}
+                      <span> / {freeMode ? activeFreeLine.length : tree.mainIds.length - 1}</span>
+                    </span>
+                  </div>
                 </div>
 
                 <div className="board-hint">
@@ -973,73 +1112,105 @@ export function App() {
                       </h2>
                     </header>
                     <div className="review-controls">
-                      <div className="analysis-level">
-                        <label htmlFor="analysis-level">Nivel</label>
-                        <select
-                          id="analysis-level"
-                          aria-label="Nivel de análisis"
-                          value={
-                            [150, 500, 2000, 5000].includes(reviewTime) ? reviewTime : 'custom'
-                          }
-                          onChange={(e) =>
-                            setReviewTime(
-                              e.target.value === 'custom' ? settings.reviewTime : +e.target.value,
-                            )
-                          }
-                        >
-                          <option value="150">Rápido (150 ms)</option>
-                          <option value="500">Normal (500 ms)</option>
-                          <option value="2000">Profundo (2 s)</option>
-                          <option value="5000">Máximo (5 s)</option>
-                          {![150, 500, 2000, 5000].includes(settings.reviewTime) && (
-                            <option value="custom">Personalizado ({settings.reviewTime} ms)</option>
-                          )}
-                        </select>
-                      </div>
+                      <AnalysisLevelPicker
+                        value={reviewTime}
+                        onChange={setReviewTime}
+                        times={[
+                          settings.reviewTime,
+                          ...(review?.complete ? [review.options.movetime] : []),
+                        ]}
+                      />
                       <button
-                        className={`primary analyze-button ${selectedManualJob ? 'cancel' : ''}`}
+                        className={`primary analyze-button ${selectedReviewJob ? 'cancel' : ''}`}
+                        title={
+                          selectedReviewJob && selectedReviewJob.state !== 'queued'
+                            ? autoReview.paused
+                              ? 'Continuar desde la posición pendiente'
+                              : 'Pausar la cola al terminar la posición actual'
+                            : undefined
+                        }
                         disabled={
                           !game ||
                           !status?.available ||
-                          !!selectedAutoJob ||
-                          (!!review?.complete && !selectedManualJob)
+                          selectedAutoJob?.state === 'queued' ||
+                          (!!review?.complete && !selectedReviewJob)
                         }
                         onClick={() =>
-                          selectedManualJob && game
-                            ? autoReview.cancel(game.id).catch(reportError)
-                            : analyzeGame()
+                          selectedReviewJob && selectedReviewJob.state !== 'queued'
+                            ? autoReview.paused
+                              ? autoReview.resume()
+                              : autoReview.pause()
+                            : selectedManualJob && game
+                              ? autoReview.cancel(game.id).catch(reportError)
+                              : analyzeGame()
                         }
                       >
                         <Icon
                           name={
-                            selectedAutoJob
-                              ? 'clock'
-                              : selectedManualJob
-                                ? 'stop'
-                                : review?.complete
-                                  ? 'check'
-                                  : 'play'
+                            selectedReviewJob && selectedReviewJob.state !== 'queued'
+                              ? autoReview.paused
+                                ? 'play'
+                                : 'pause'
+                              : selectedAutoJob
+                                ? 'clock'
+                                : selectedManualJob
+                                  ? 'stop'
+                                  : review?.complete
+                                    ? 'check'
+                                    : 'play'
                           }
                           size={17}
                         />
-                        {selectedAutoJob
-                          ? selectedAutoJob.state === 'queued'
-                            ? 'En cola'
-                            : 'Analizando automáticamente'
-                          : selectedManualJob
-                            ? selectedManualJob.state === 'queued'
-                              ? 'Cancelar solicitud'
-                              : 'Cancelar análisis'
-                            : review?.complete
-                              ? 'Partida analizada'
-                              : 'Analizar partida'}
+                        {selectedReviewJob && selectedReviewJob.state !== 'queued' ? (
+                          autoReview.paused ? (
+                            'Reanudar análisis'
+                          ) : (
+                            'Pausar análisis'
+                          )
+                        ) : selectedAutoJob ? (
+                          selectedAutoJob.state === 'queued' ? (
+                            'En cola'
+                          ) : (
+                            'Analizando automáticamente'
+                          )
+                        ) : selectedManualJob ? (
+                          selectedManualJob.state === 'queued' ? (
+                            'Cancelar solicitud'
+                          ) : (
+                            'Cancelar análisis'
+                          )
+                        ) : review?.complete ? (
+                          <span
+                            className="analysed-label"
+                            title={analysisLevelLabel(review.options.movetime)}
+                          >
+                            Analizada ({analysisLevelName(review.options.movetime)})
+                          </span>
+                        ) : (
+                          'Analizar partida'
+                        )}
                       </button>
+                      {selectedManualJob && selectedManualJob.state !== 'queued' && game && (
+                        <button
+                          className="secondary pause-cancel"
+                          onClick={() => autoReview.cancel(game.id).catch(reportError)}
+                        >
+                          <Icon name="stop" size={16} /> Cancelar
+                        </button>
+                      )}
                       {review?.complete && !selectedReviewJob && (
                         <button
                           className="secondary reanalyze"
                           onClick={analyzeGame}
-                          disabled={!status?.available}
-                          title="Volver a analizar con el nivel seleccionado"
+                          disabled={!status?.available || !!reviewMatchesSelection}
+                          title={
+                            reviewMatchesSelection
+                              ? 'Ya analizada con este nivel'
+                              : review.options.movetime === reviewTime &&
+                                  review.options.multiPv < options.multiPv
+                                ? `Ampliar el análisis a ${options.multiPv} líneas`
+                                : 'Volver a analizar con el nivel seleccionado'
+                          }
                         >
                           <Icon name="refresh" size={18} /> Reanalizar partida
                         </button>
@@ -1048,7 +1219,8 @@ export function App() {
                         <div className="progress-area" role="status">
                           <div>
                             <span>
-                              Posición {visibleProgress.done} de {visibleProgress.total}
+                              {autoReview.paused ? 'En pausa' : 'Posición'} {visibleProgress.done}{' '}
+                              de {visibleProgress.total}
                             </span>{' '}
                             <span>
                               {Math.round((visibleProgress.done / visibleProgress.total) * 100)}%
@@ -1069,6 +1241,7 @@ export function App() {
                     <h2 className="card-title" id="summary-title">
                       {freeMode ? 'Análisis' : 'Resumen'}
                     </h2>
+                    <MoveExplanation node={node} before={parentNode} move={currentReview} />
                   </header>
                   <div className="panel-tabs" role="tablist" aria-label="Panel de análisis">
                     {(
@@ -1101,13 +1274,10 @@ export function App() {
                             <Icon name="book" size={16} />
                             <span>
                               {game
-                                ? new Chess(game.pgn ? tree.rootFen : undefined).fen() ===
-                                  new Chess().fen()
+                                ? tree.rootFen === emptyTree.rootFen
                                   ? 'Partida principal'
                                   : 'Posición personalizada'
-                                : freeMode
-                                  ? 'Línea seleccionada'
-                                  : 'Posición inicial'}
+                                : 'Posición inicial'}
                             </span>
                             <span>{game?.result || '—'}</span>
                           </div>
@@ -1119,13 +1289,7 @@ export function App() {
                           onSelect={go}
                           onImport={() => setModal('import')}
                           line={freeMode ? activeFreeLine : undefined}
-                          ratings={Object.fromEntries(
-                            tree.nodes.map((n) => {
-                              const parent = tree.nodes.find((p) => p.id === n.parent);
-                              const rating = moveRatings[`${positionScope}:${n.id}:${n.fen}`];
-                              return [n.id, parent ? withBookMove(parent, n, rating) : rating];
-                            }),
-                          )}
+                          ratings={moveListRatings}
                         />
                       </>
                     )}
@@ -1133,10 +1297,12 @@ export function App() {
                       (review?.complete && !selectedReviewJob ? (
                         <ReviewSummary
                           onCategory={browseCategory}
-                          activeCategory={tour?.category}
-                          activeColor={tour?.color}
+                          activeCategory={selectedTour?.category}
+                          activeColor={selectedTour?.color}
                           categoryProgress={
-                            tour ? { index: tour.index, total: tour.total } : undefined
+                            selectedTour
+                              ? { index: selectedTour.index, total: selectedTour.total }
+                              : undefined
                           }
                           review={review}
                           game={game!}
@@ -1155,16 +1321,6 @@ export function App() {
                         </div>
                       ))}
                   </div>
-                  <SummaryFooter
-                    tab={tab}
-                    tour={tour}
-                    node={node}
-                    move={currentReview}
-                    onReturn={() => {
-                      if (tour) go(tour.origin);
-                      setTour(null);
-                    }}
-                  />
                 </section>
               </div>
               <div className={`analysis-side ${freeMode ? 'free-analysis' : ''}`}>
@@ -1180,7 +1336,7 @@ export function App() {
                         username={settings.username}
                         review={review}
                         total={tree.mainIds.length}
-                        ply={node.main ? node.ply : Number(returnId.slice(1)) || 0}
+                        ply={mainOrigin(tree, node)?.ply ?? 0}
                         onSelect={(ply) => go(`m${ply}`)}
                       />
                     </div>
@@ -1247,23 +1403,6 @@ export function App() {
           </div>
         </Modal>
       )}
-      <BackgroundNotice
-        activity={autoReview.activity?.kind === 'error' ? null : autoReview.activity}
-        modal={modal}
-      />
-      <ErrorNotice
-        message={
-          error ||
-          (autoReview.activity?.kind === 'error'
-            ? `${autoReview.activity.title}: ${autoReview.activity.detail}`
-            : '') ||
-          (ready && status && !status.available
-            ? 'No se encuentra Stockfish 19. Revisa la instalación del motor.'
-            : '')
-        }
-        modal={modal}
-        onClose={() => setError('')}
-      />
       {modal === 'profile' && (
         <Modal title="Perfil" className="profile-modal" onClose={() => setModal(null)}>
           <ProfilePanel
@@ -1326,12 +1465,33 @@ export function App() {
         <Modal title="Ajustes" className="settings-modal" onClose={() => setModal(null)}>
           <SettingsPanel
             settings={settings}
+            cpus={status?.cpus ?? 4}
+            protectedIds={[...Object.keys(reviewJobs), ...seenGames.pending]}
+            onStorageCleaned={async (ids, cache) => {
+              for (const id of ids) latestReviews.current.delete(id);
+              seenGames.forget(ids);
+              if (analysisSession.current?.game && ids.includes(analysisSession.current.game.id))
+                analysisSession.current.review = null;
+              if (freeUndo?.game && ids.includes(freeUndo.game.id))
+                setFreeUndo({ ...freeUndo, review: null });
+              if (!freeMode && game && ids.includes(game.id)) {
+                setReview(null);
+                setTour(null);
+                setMoveRatings({});
+                setReviewTime(settings.reviewTime);
+              }
+              if (cache || ids.length) completedPositions.current.clear();
+              if (ids.length) statisticsCache.current.invalidate();
+              setCategoryLibrary(null);
+              setReviewRevision((n) => n + 1);
+            }}
             onChange={(s) => {
               setSettings(s);
-              setReviewTime(s.reviewTime);
+              if (!review?.complete) setReviewTime(s.reviewTime);
             }}
           />
           <div className="modal-actions settings-actions">
+            <SupportLink onError={reportError} />
             <button className="primary" onClick={() => setModal(null)}>
               Listo
             </button>
@@ -1339,18 +1499,37 @@ export function App() {
         </Modal>
       )}
       {modal === 'library' && (
-        <Modal title="Tu biblioteca" wide onClose={() => setModal(null)}>
+        <Modal
+          title="Tu biblioteca"
+          wide
+          onClose={() => {
+            setCategoryLibrary(null);
+            setModal(null);
+          }}
+        >
           <GameLibrary
-            games={games}
+            games={libraryGames}
+            now={recentNow}
             username={settings.username}
             selected={game?.id}
-            onSelect={(g) => selectGame(g).catch(reportError)}
-            onImport={() => setModal('import')}
+            onSelect={(g) => {
+              selectGame(g).catch(reportError);
+            }}
+            onImport={() => {
+              setCategoryLibrary(null);
+              setModal('import');
+            }}
             onSync={() => syncGames()}
             syncing={syncing}
             reviewed={reviewIndex.reviewed}
+            seen={seenGames.ids}
+            loadingSeen={seenGames.loading}
+            pendingSeen={seenGames.pending}
+            onToggleSeen={(id) => void seenGames.toggle(id)}
             loadingReviews={reviewIndex.loading}
             jobs={reviewJobs}
+            categoryFilter={categoryLibrary ?? undefined}
+            onClearCategory={() => setCategoryLibrary(null)}
           />
         </Modal>
       )}

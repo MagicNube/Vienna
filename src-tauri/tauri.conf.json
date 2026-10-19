@@ -6,13 +6,16 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build:public",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
         "title": "Vienna",
+        "decorations": false,
+        "resizable": true,
+        "theme": "Dark",
         "width": 1440,
         "height": 960,
         "minWidth": 780,

@@ -13,7 +13,9 @@ npm test
 npm run package
 ```
 
-Sonidos originales CC0, código GPL-3.0-or-later y atribuciones incluidas. No contiene cuentas ni partidas guardadas de ningún usuario. El catálogo de aperturas y las posiciones aisladas de pruebas son recursos del programa, no bases de usuarios.
+Sonidos de madera de Kenney editados para Vienna (CC0), código GPL-3.0-or-later y atribuciones incluidas. No contiene cuentas ni partidas guardadas de ningún usuario. El catálogo de aperturas y las posiciones aisladas de pruebas son recursos del programa, no bases de usuarios.
+
+El empaquetado público ejecuta `build:public`: verifica los SHA-256 de los cuatro WAV CC0 y rechaza MP3, carpetas personales, bases de datos, claves y referencias a sonidos privados en el código compilado. El enlace voluntario de apoyo es https://buymeacoffee.com/magicnube; el permiso Opener de escritorio está limitado a esa URL.
 
 ## Compilación personal
 

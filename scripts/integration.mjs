@@ -129,11 +129,75 @@ try {
   console.log('PASS parámetros inválidos rechazados');
   for (const kind of ['games', 'variants', 'reviews', 'settings'])
     await bridge.call('put', { kind, id: 'test', value: { retained: true, kind } });
+  for (const [id, complete, version] of [
+    ['ready', true, 1],
+    ['pending', false, 1],
+    ['old', true, 0],
+  ])
+    await bridge.call('put', {
+      kind: 'reviews',
+      id,
+      value: { complete, version, positions: { retained: true } },
+    });
+  assert.deepEqual(await bridge.call('review-index', { version: 1 }), ['ready']);
+  const statsReview = {
+    version: 1,
+    classificationVersion: 11,
+    complete: true,
+    engineId: status.engineId,
+    options,
+    moves: [
+      {
+        ply: 1,
+        color: 'w',
+        category: 'excellent',
+        loss: 0.01,
+        best: 'e4',
+        explanation: 'Descripción completa',
+      },
+    ],
+    positions: { m0: result, m1: black },
+  };
+  await bridge.call('put', { kind: 'reviews', id: 'statistics', value: statsReview });
+  const summaries = await bridge.call('statistics-reviews', { ids: ['statistics', 'missing'] });
+  assert.deepEqual(Object.keys(summaries), ['statistics']);
+  assert.deepEqual(summaries.statistics.positions, {});
+  assert.equal(summaries.statistics.moves[0].category, 'excellent');
+  assert.equal(summaries.statistics.moves[0].loss, 0.01);
+  assert.equal(summaries.statistics.moves[0].explanation, '');
+  assert.equal(
+    await bridge.call('cache-statistics-review', {
+      id: 'statistics',
+      expected: summaries.statistics,
+      value: { ...summaries.statistics, classificationVersion: 12 },
+    }),
+    true,
+  );
   bridge.stop();
   bridge = start();
   for (const kind of ['games', 'variants', 'reviews', 'settings'])
     assert.equal((await bridge.call('get', { kind, id: 'test' })).retained, true);
   assert.equal((await bridge.call('analyze', args)).cached, true);
+  assert.deepEqual(await bridge.call('review-index', { version: 1 }), ['ready', 'statistics']);
+  const reopenedSummaries = await bridge.call('statistics-reviews', { ids: ['statistics'] });
+  assert.equal(reopenedSummaries.statistics.classificationVersion, 12);
+  assert.deepEqual(await bridge.call('get', { kind: 'reviews', id: 'statistics' }), statsReview);
+  assert.equal(
+    await bridge.call('cache-statistics-review', {
+      id: 'statistics',
+      expected: summaries.statistics,
+      value: summaries.statistics,
+    }),
+    false,
+  );
+  console.log(
+    'PASS resúmenes estadísticos persistentes, compactos y protegidos ante escrituras antiguas',
+  );
+  assert.equal(
+    (await bridge.call('get', { kind: 'reviews', id: 'ready' })).positions.retained,
+    true,
+  );
+  console.log('PASS índice compacto de análisis completos, sin modificar las revisiones guardadas');
   console.log('PASS partidas, variantes, revisión, ajustes y caché sobreviven al reinicio');
   if (process.env.TEST_CHESSCOM) {
     const remote = await bridge.call('sync', { username: 'erik', months: 1 });

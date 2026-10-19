@@ -1,8 +1,8 @@
 import { expect, it } from 'vitest';
 import { makeTree } from './game';
-import { openingForMove, withBookMove, withOpeningBook } from './openings';
+import { openingForMove, withBookMove } from './openings';
 import { accuracy } from '../review/classification';
-import type { MoveReview, Review } from '../types';
+import type { MoveReview } from '../types';
 
 it('reconoce e4 y e5 por posición y jugada, sin etiquetar cualquier jugada temprana', () => {
   const tree = makeTree('1. e4 e5 2. Ke2 Ke7 *');
@@ -20,7 +20,7 @@ it('no etiqueta como apertura una posición repetida mucho después', () => {
   const tree = makeTree('1. e4 *');
   expect(openingForMove(tree.nodes[0], { ...tree.nodes[1], ply: 65 })).toBeUndefined();
 });
-it('actualiza revisiones antiguas sin mutarlas y excluye Libro de la precisión', () => {
+it('etiqueta Libro sin mutar la valoración y lo excluye de la precisión', () => {
   const tree = makeTree('1. e4 *');
   const move: MoveReview = {
     ply: 1,
@@ -30,18 +30,10 @@ it('actualiza revisiones antiguas sin mutarlas y excluye Libro de la precisión'
     explanation: '',
     best: 'd2d4',
   };
-  const review: Review = {
-    version: 1,
-    engineId: 'test',
-    options: { threads: 1, hash: 16, multiPv: 3, movetime: 100, depth: null },
-    positions: {},
-    moves: [move],
-    complete: true,
-  };
-  const decorated = withOpeningBook(tree, review);
-  expect(decorated.moves[0].category).toBe('book');
-  expect(review.moves[0].category).toBe('excellent');
+  const decorated = withBookMove(tree.nodes[0], tree.nodes[1], move)!;
+  expect(decorated.category).toBe('book');
+  expect(move.category).toBe('excellent');
   expect(withBookMove(tree.nodes[0], tree.nodes[1])?.category).toBe('book');
-  expect(accuracy(decorated.moves)).toBeNull();
-  expect(accuracy([...decorated.moves, { ...move, loss: 0.1 }])).toBeCloseTo(100 * Math.exp(-0.4));
+  expect(accuracy([decorated])).toBeNull();
+  expect(accuracy([decorated, { ...move, loss: 0.1 }])).toBeCloseTo(100 * Math.exp(-0.4));
 });

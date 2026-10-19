@@ -1,6 +1,8 @@
 import { pvSan } from '../chess/game';
 import { score } from '../engine/EngineService';
 import { playedLine } from '../engine/playedLine';
+import { isInitialPosition } from '../engine/lines';
+import { candidateOptions, candidateRank } from '../engine/candidateOptions';
 import { evaluationSide, evaluationDescription } from '../engine/evaluation';
 import { Icon } from './Icon';
 import { ReadableMove } from './ReadableMove';
@@ -38,13 +40,23 @@ export function Continuations({
     observer.observe(panel);
     return () => observer.disconnect();
   }, []);
+  const turn = node.fen.split(' ')[1] as 'w' | 'b';
   const played = freeMode ? null : playedLine(tree, node, review, lines);
+  const candidates = candidateOptions(lines, turn, played?.node.uci);
+  const rank = played ? candidateRank(lines, played.node.uci) : null;
+  const rankLabel = rank === 1 ? 'Mejor opción' : rank ? `${rank}.ª opción` : 'Otra opción';
   function row(line: EngineLine, index: number, actual = false) {
     const preview = actual ? { ...line, rank: 0 } : line;
+    const gameMove = !actual && line.pv[0] === played?.node.uci;
     return (
       <button
-        className={`pv-line ${actual ? 'played-line' : ''}`}
+        className={`pv-line ${actual ? 'played-line' : ''} ${gameMove ? 'is-game-move' : ''}`}
         key={actual ? 'played' : line.rank}
+        aria-label={
+          gameMove
+            ? `${pvSan(node.fen, line.pv, 1)[0]}, ${rankLabel.toLowerCase()} del motor, jugada de la partida`
+            : undefined
+        }
         disabled={!line.pv[0]}
         onMouseEnter={() => onPreview(preview)}
         onMouseLeave={() => onPreview(null)}
@@ -76,6 +88,11 @@ export function Continuations({
                   ★
                 </span>
               )}
+              {index > 0 && !actual && (
+                <span className="pv-option-rank" title={`${index + 1}.ª opción del motor`}>
+                  {index + 1}.ª
+                </span>
+              )}
               {pvSan(node.fen, line.pv, 1)[0]?.replace(/^(\d+)[.…]/, '$1. ') ??
                 (line.mate !== null ? 'Jaque mate' : 'Tablas')}
             </strong>
@@ -102,36 +119,56 @@ export function Continuations({
     >
       <header>
         <h2 className="card-title">Continuaciones</h2>
-        <span>{node.fen.split(' ')[1] === 'w' ? 'Juegan blancas' : 'Juegan negras'}</span>
+        <span className={`continuation-turn ${turn}`}>
+          {turn === 'w' ? 'Juegan blancas' : 'Juegan negras'}
+        </span>
       </header>
-      <div className="engine-lines">
-        {played && (
-          <section className="played-continuation" aria-label="Jugada realizada en esta posición">
-            <h3>
-              <Icon name="played-move" size={16} />
-              Jugada de la partida
-            </h3>
-            {played.line ? (
-              row(played.line, -1, true)
+      {isInitialPosition(node) ? (
+        <p className="engine-empty initial-continuations">
+          Haz una jugada para ver las continuaciones.
+        </p>
+      ) : (
+        <div className="engine-lines">
+          {played && (
+            <section className="played-continuation" aria-label="Jugada realizada en esta posición">
+              <h3>
+                <Icon name="played-move" size={16} />
+                <span>Jugada de la partida</span>
+                {lines.some((line) => line.pv[0]) && (
+                  <span
+                    className="pv-game-rank"
+                    title={
+                      rank
+                        ? `${rankLabel} entre las líneas analizadas`
+                        : 'No aparece entre las opciones analizadas; se desconoce su posición exacta'
+                    }
+                  >
+                    {rankLabel}
+                  </span>
+                )}
+              </h3>
+              {played.line ? (
+                row(played.line, -1, true)
+              ) : (
+                <button className="unrated-played" onClick={() => onSelect(played.node.id)}>
+                  <ReadableMove node={played.node} />
+                  <span>Sin evaluar</span>
+                </button>
+              )}
+            </section>
+          )}
+          <section className="engine-options" aria-label="Opciones del motor">
+            {played && <h3>Opciones del motor</h3>}
+            {candidates.length ? (
+              candidates.map((line, index) => row(line, index))
             ) : (
-              <button className="unrated-played" onClick={() => onSelect(played.node.id)}>
-                <ReadableMove node={played.node} />
-                <span>Sin evaluar</span>
-              </button>
+              <p className="engine-empty">
+                {busy ? 'Calculando…' : 'Sin continuaciones disponibles'}
+              </p>
             )}
           </section>
-        )}
-        <section className="engine-options" aria-label="Opciones del motor">
-          {played && <h3>Opciones del motor</h3>}
-          {lines.length ? (
-            lines.slice(0, 4).map((line, index) => row(line, index))
-          ) : (
-            <p className="engine-empty">
-              {busy ? 'Calculando…' : 'Sin continuaciones disponibles'}
-            </p>
-          )}
-        </section>
-      </div>
+        </div>
+      )}
     </aside>
   );
 }

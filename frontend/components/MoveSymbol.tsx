@@ -5,6 +5,22 @@ import { Icon } from './Icon';
 /** Familiar annotation symbols, drawn locally to keep a consistent weight. */
 export function MoveSymbol({ category }: { category: Category }) {
   if (category === 'book') return <Icon name="book" size={16} />;
+  if (category === 'miss')
+    return (
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        width="16"
+        height="16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+      >
+        <circle cx="12" cy="12" r="8" />
+        <path d="m6 18 12-12" />
+      </svg>
+    );
   if (category === 'excellent')
     return (
       <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">

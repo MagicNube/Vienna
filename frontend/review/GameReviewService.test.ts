@@ -12,6 +12,8 @@ vi.mock('../engine/EngineService', async (original) => ({
 }));
 vi.mock('../database/repository', () => ({ repository: { put: mocks.put, get: mocks.get } }));
 import { GameReviewService } from './GameReviewService';
+import { createBackgroundQueue } from './backgroundQueue';
+import type { Game } from '../types';
 const options: EngineOptions = { threads: 1, hash: 16, multiPv: 1, movetime: 100, depth: null };
 const result: Analysis = {
   cached: false,
@@ -75,4 +77,106 @@ it('cancelar un reanálisis no sobrescribe la revisión completa guardada', asyn
   finish(result);
   await cancelled;
   expect(mocks.put.mock.calls.map((call) => call[0])).toEqual(['review-drafts']);
+});
+
+it('no publica progreso ni inicia otra posición al cancelar durante el guardado', async () => {
+  mocks.analyze.mockResolvedValue(result);
+  let finishSave!: () => void;
+  mocks.put.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finishSave = resolve;
+      }),
+  );
+  const service = new GameReviewService();
+  const progress = vi.fn();
+  const running = service.run('saved', makeTree('1. e4 *'), options, progress);
+  const cancelled = expect(running).rejects.toThrow('cancelled');
+  await vi.waitFor(() => expect(mocks.put).toHaveBeenCalledOnce());
+  await service.cancel();
+  finishSave();
+  await cancelled;
+  expect(progress).not.toHaveBeenCalled();
+  expect(mocks.analyze).toHaveBeenCalledOnce();
+});
+
+it('pausa tras guardar la posición actual y reanuda sin repetir posiciones ni solapar partidas', async () => {
+  let finish!: (value: Analysis) => void;
+  mocks.analyze
+    .mockImplementationOnce(
+      () =>
+        new Promise<Analysis>((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValue(result);
+  const service = new GameReviewService();
+  const progress = vi.fn(),
+    jobs = vi.fn(),
+    notify = vi.fn();
+  const first: Game = {
+    id: 'a',
+    pgn: '1. e4 *',
+    white: 'A',
+    black: 'B',
+    date: 1,
+    result: '*',
+    source: 'pgn',
+    timeClass: 'blitz',
+    timeControl: '180',
+  };
+  const second = { ...first, id: 'b' };
+  const queue = createBackgroundQueue({
+    owner: { current: null },
+    read: async () => null,
+    compatible: () => false,
+    run: async (game, onProgress) =>
+      service.run(game.id, makeTree(game.pgn), options, (...args) => {
+        progress(game.id, ...args);
+        onProgress(...args);
+      }),
+    cancel: () => service.cancel(),
+    pause: () => service.pause(),
+    resume: () => service.resume(),
+    onJobs: jobs,
+    notify,
+    onReview: vi.fn(),
+  });
+  await queue.add([first, second]);
+  await vi.waitFor(() => expect(mocks.analyze).toHaveBeenCalledOnce());
+  queue.pause();
+  finish(result);
+  await vi.waitFor(() => expect(progress).toHaveBeenCalledOnce());
+  expect(mocks.analyze).toHaveBeenCalledOnce();
+  expect(jobs.mock.lastCall?.[0]).toMatchObject({
+    a: { state: 'paused', done: 1, total: 2 },
+    b: { state: 'queued' },
+  });
+  expect(notify).toHaveBeenLastCalledWith(
+    expect.objectContaining({ title: 'Análisis en pausa', done: 1, paused: true }),
+  );
+  await queue.drain();
+  expect(mocks.analyze).toHaveBeenCalledOnce();
+  queue.resume();
+  await vi.waitFor(() => expect(progress).toHaveBeenCalledTimes(4));
+  expect(mocks.analyze.mock.calls.map((call) => call[1])).toEqual(['m0', 'm1', 'm0', 'm1']);
+  expect(progress.mock.calls.map((call) => call[0])).toEqual(['a', 'a', 'b', 'b']);
+  expect(jobs.mock.lastCall?.[0]).toEqual({});
+  queue.stop();
+});
+
+it('cancelar durante la pausa libera la espera y no analiza otra posición', async () => {
+  mocks.analyze.mockResolvedValue(result);
+  const service = new GameReviewService(),
+    progress = vi.fn();
+  progress.mockImplementationOnce(() => service.pause());
+  const running = service.run('paused', makeTree('1. e4 *'), options, progress);
+  const cancelled = expect(running).rejects.toThrow('cancelled');
+  await vi.waitFor(() => expect(progress).toHaveBeenCalledOnce());
+  await service.cancel();
+  await cancelled;
+  expect(mocks.analyze).toHaveBeenCalledOnce();
+  service.resume();
+  const later = await service.run('later', makeTree('1. e4 *'), options, vi.fn());
+  expect(later.complete).toBe(true);
 });

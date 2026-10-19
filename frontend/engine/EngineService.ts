@@ -27,7 +27,14 @@ export class EngineService {
       };
     if (!this.listening)
       this.listening = onEngineInfo((e) => this.callbacks.get(e.requestId)?.(e.lines));
-    await this.listening;
+    const listening = this.listening;
+    try {
+      await listening;
+    } catch (error) {
+      // A failed subscription must not make every subsequent analysis fail.
+      if (this.listening === listening) this.listening = null;
+      throw error;
+    }
     options = {
       ...options,
       multiPv: Math.min(

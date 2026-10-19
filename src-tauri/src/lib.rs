@@ -57,6 +57,43 @@ impl Backend {
                 .get(&str_arg("kind")?, &str_arg("id")?)?
                 .unwrap_or(Value::Null)),
             "list" => Ok(json!(self.db.list(&str_arg("kind")?)?)),
+            "review-index" => Ok(json!(self
+                .db
+                .reviewed_ids(args["version"].as_i64().ok_or("Falta version")?)?)),
+            "statistics-reviews" => {
+                let ids: Vec<String> =
+                    serde_json::from_value(args["ids"].clone()).map_err(|e| e.to_string())?;
+                self.db.statistics_reviews(&ids)
+            }
+            "cache-statistics-review" => Ok(json!(self.db.cache_statistics_review(
+                &str_arg("id")?,
+                &args["expected"],
+                &args["value"]
+            )?)),
+            "storage-info" | "clear-old-reviews" => {
+                let cutoff = args["cutoff"]
+                    .as_i64()
+                    .filter(|v| *v > 0)
+                    .ok_or("Fecha de limpieza no válida")?;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| e.to_string())?
+                    .as_millis() as i64;
+                if cutoff > now {
+                    return Err("La fecha de limpieza no puede estar en el futuro".into());
+                }
+                let protected: Vec<String> =
+                    serde_json::from_value(args["protected"].clone()).map_err(|e| e.to_string())?;
+                if command == "storage-info" {
+                    Ok(json!(self.db.storage_info(cutoff, &protected)?))
+                } else {
+                    Ok(json!(self.db.clear_old_reviews(cutoff, &protected)?))
+                }
+            }
+            "clear-position-cache" => {
+                self.db.clear_position_cache()?;
+                Ok(Value::Null)
+            }
             "put" => {
                 self.db
                     .put(&str_arg("kind")?, &str_arg("id")?, &args["value"])?;
@@ -144,6 +181,11 @@ async fn rpc(
 }
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .setup(|app| {
             let resource = if cfg!(debug_assertions) {
                 PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/stockfish")

@@ -150,7 +150,7 @@ export function EvalGraph({
                 cy={y(i)}
                 r={
                   review?.moves[i - 1] &&
-                  ['blunder', 'mistake', 'brilliant', 'inaccuracy'].includes(
+                  ['blunder', 'mistake', 'brilliant', 'inaccuracy', 'miss'].includes(
                     review.moves[i - 1].category,
                   )
                     ? 2.5

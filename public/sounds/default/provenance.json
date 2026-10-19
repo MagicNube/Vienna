@@ -1,26 +1,39 @@
 {
-  "origin": "Original procedural synthesis for Vienna; no external samples",
-  "generator": "scripts/generate-sounds.mjs",
+  "origin": "Kenney — Impact Sounds 1.0 (2019), edited for Vienna",
+  "source": "https://kenney.nl/assets/impact-sounds",
+  "author": "Kenney",
   "license": "CC0-1.0",
+  "generator": "scripts/generate-sounds.mjs",
+  "modifications": "Decoded OGG sources to mono PCM WAV; trimmed pre-roll/tail, faded edges, adjusted gain; check and mate combine wooden hits.",
+  "sources": {
+    "impactWood_light_000.wav": {
+      "original": "impactWood_light_000.ogg",
+      "sha256": "4ef04ce3b85ece5b4816de9f814ff8e0e756d6c08a2062edd3a343ebf31d0c3a"
+    },
+    "impactWood_medium_000.wav": {
+      "original": "impactWood_medium_000.ogg",
+      "sha256": "84ebc1aa9c2dffbcaec39c64f71bff5d6c93cf638f7b8ae3a357a1430bcc44bb"
+    }
+  },
   "sampleRate": 44100,
   "channels": 1,
   "bits": 16,
   "files": {
     "move.wav": {
-      "duration": 0.09,
-      "sha256": "1927925bcc868351ae772f9e55d547931f4164fefd4ae5e42e4e89b25831cb71"
+      "duration": 0.2656009070294785,
+      "sha256": "79dbe996c2da650cff9df2c21d2863584034b9da70fe892c5a8a064a9ae85422"
     },
     "capture.wav": {
-      "duration": 0.15,
-      "sha256": "abe3c06a35accb4b44316e46b683b86ae5c01d0400e934a6a79835cd2549d330"
+      "duration": 0.33267573696145125,
+      "sha256": "d60555f8a40ebf09ba06023af73f7c260abc5d8aaf63a2df69b930c07563da81"
     },
     "check.wav": {
-      "duration": 0.24,
-      "sha256": "a0d0ad373de88c6a34c58129a09d21002bce7b0034000bba64b9b97610fa1ab3"
+      "duration": 0.43768707482993197,
+      "sha256": "3abee6c3549a404eee46b652cd08fa87d28475dfdccbca01c0d5c9563ddbde85"
     },
     "mate.wav": {
-      "duration": 0.42,
-      "sha256": "ca41c4f4217f76afad128eeb028a4b3787ba955134d25e63736fc56c9be93cf2"
+      "duration": 0.6126757369614513,
+      "sha256": "d483c15dde344088f6834da21b02457a33610426a5edda170cea92a4852e797f"
     }
   }
 }
