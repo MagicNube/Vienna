@@ -65,7 +65,7 @@ for (const relative of [...new Set(files)].sort()) {
   let bytes = await readFile(destination);
   // Keep the manifest valid after Git checkout on Windows as well as in the ZIP.
   if (!bytes.includes(0)) {
-    bytes = Buffer.from(bytes.toString('utf8').replaceAll('\r\n', '\n'));
+    bytes = Buffer.from(bytes.toString('utf8').replace(/\r\n?/g, '\n'));
     await writeFile(destination, bytes);
   }
   if (
