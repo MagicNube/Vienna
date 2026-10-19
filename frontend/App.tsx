@@ -8,7 +8,8 @@ import { EvaluationBar } from './components/EvaluationBar';
 import { Modal } from './components/Modal';
 import { WINDOW_ERROR_EVENT } from './components/WindowTitleBar';
 import { SettingsPanel } from './components/SettingsPanel';
-import { SupportLink } from './components/SupportLink';
+import { SettingsActions } from './components/SettingsActions';
+import type { FeedbackAction } from './components/HelpSettings';
 import { AnalysisLevelPicker } from './components/AnalysisLevelPicker';
 import { GameLibrary, timeControl } from './components/GameLibrary';
 import { ReviewSummary } from './components/ReviewSummary';
@@ -126,6 +127,8 @@ export function App() {
     counts: Record<string, number>;
   } | null>(null);
   const [reviewTime, setReviewTime] = useState(500);
+  const [settingsReport, setSettingsReport] = useState<string>();
+  const [feedbackAction, setFeedbackAction] = useState<FeedbackAction>(null);
   useLayoutEffect(() => applyAppearance(settings), [settings.appearance, settings.density]);
   const libraryGames = useMemo(
     () => accountGames(games, settings.username),
@@ -772,6 +775,10 @@ export function App() {
               autoReview.viewGame(id);
               void openActivityGame(id).catch(reportError);
             }}
+            onReport={(detail) => {
+              setSettingsReport(detail);
+              setModal('settings');
+            }}
             onDismiss={autoReview.dismiss}
             paused={autoReview.paused}
             onPause={autoReview.pause}
@@ -901,7 +908,10 @@ export function App() {
             className="profile-settings icon-button"
             aria-label="Ajustes"
             title="Ajustes"
-            onClick={() => setModal('settings')}
+            onClick={() => {
+              setSettingsReport(undefined);
+              setModal('settings');
+            }}
           >
             <Icon name="settings" size={18} />
           </button>
@@ -1462,8 +1472,15 @@ export function App() {
         </Modal>
       )}
       {modal === 'settings' && (
-        <Modal title="Ajustes" className="settings-modal" onClose={() => setModal(null)}>
+        <Modal
+          title="Ajustes"
+          className="settings-modal"
+          onClose={() => setModal(null)}
+          dismissOnBackdrop={!feedbackAction}
+        >
           <SettingsPanel
+            initialReport={settingsReport}
+            onFeedbackAction={setFeedbackAction}
             settings={settings}
             cpus={status?.cpus ?? 4}
             protectedIds={[...Object.keys(reviewJobs), ...seenGames.pending]}
@@ -1490,12 +1507,11 @@ export function App() {
               if (!review?.complete) setReviewTime(s.reviewTime);
             }}
           />
-          <div className="modal-actions settings-actions">
-            <SupportLink onError={reportError} />
-            <button className="primary" onClick={() => setModal(null)}>
-              Listo
-            </button>
-          </div>
+          <SettingsActions
+            feedbackAction={feedbackAction}
+            onClose={() => setModal(null)}
+            onError={reportError}
+          />
         </Modal>
       )}
       {modal === 'library' && (

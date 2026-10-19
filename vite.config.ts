@@ -126,5 +126,10 @@ export default defineConfig(({ mode }) => ({
       ignored: ['**/src-tauri/**', '**/.vienna-private/**', '**/.vienna-dev/**', '**/exports/**'],
     },
   },
+  define: {
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(
+      JSON.parse(readFileSync(path.resolve('package.json'), 'utf8')).version,
+    ),
+  },
   clearScreen: false,
 }));

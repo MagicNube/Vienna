@@ -5,6 +5,7 @@ import { SoundPicker } from './SoundPicker';
 import { AnalysisLevelPicker } from './AnalysisLevelPicker';
 import { StorageSettings } from './StorageSettings';
 import { AppearanceSettings } from './AppearanceSettings';
+import { HelpSettings, type FeedbackAction } from './HelpSettings';
 import {
   applyProcessingProfile,
   selectedProcessingProfile,
@@ -17,14 +18,20 @@ export function SettingsPanel({
   protectedIds,
   onStorageCleaned,
   cpus = 4,
+  initialReport,
+  onFeedbackAction,
 }: {
   settings: Settings;
   onChange: (settings: Settings) => void;
   protectedIds: string[];
   onStorageCleaned: (ids: string[], cache: boolean) => Promise<void>;
   cpus?: number;
+  initialReport?: string;
+  onFeedbackAction?: (action: FeedbackAction) => void;
 }) {
-  const [tab, setTab] = useState<'engine' | 'board' | 'appearance' | 'storage'>('engine');
+  const [tab, setTab] = useState<'engine' | 'board' | 'appearance' | 'storage' | 'help'>(
+    initialReport ? 'help' : 'engine',
+  );
   const latest = useRef(settings);
   latest.current = settings;
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
@@ -74,6 +81,15 @@ export function SettingsPanel({
           onClick={() => setTab('storage')}
         >
           Espacio
+        </button>
+        <button
+          id="help-settings-tab"
+          role="tab"
+          aria-selected={tab === 'help'}
+          aria-controls="settings-content"
+          onClick={() => setTab('help')}
+        >
+          Ayuda
         </button>
       </div>
       <div
@@ -212,7 +228,7 @@ export function SettingsPanel({
               </div>
             </section>
           </>
-        ) : tab === 'appearance' ? (
+        ) : tab === 'help' ? null : tab === 'appearance' ? (
           <AppearanceSettings settings={settings} onChange={onChange} />
         ) : tab === 'storage' ? (
           <StorageSettings protectedIds={protectedIds} onCleaned={onStorageCleaned} />
@@ -272,6 +288,13 @@ export function SettingsPanel({
             </div>
           </div>
         )}
+        <div hidden={tab !== 'help'}>
+          <HelpSettings
+            initialReport={initialReport}
+            active={tab === 'help'}
+            onActionChange={onFeedbackAction}
+          />
+        </div>
       </div>
     </div>
   );

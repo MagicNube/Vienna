@@ -17,6 +17,8 @@ Sonidos de madera de Kenney editados para Vienna (CC0), código GPL-3.0-or-later
 
 El empaquetado público ejecuta `build:public`: verifica los SHA-256 de los cuatro WAV CC0 y rechaza MP3, carpetas personales, bases de datos, claves y referencias a sonidos privados en el código compilado. El enlace voluntario de apoyo es https://buymeacoffee.com/magicnube; el permiso Opener de escritorio está limitado a esa URL.
 
+El formulario oficial de sugerencias lleva un identificador público de Web3Forms en `frontend/api/feedback.ts`; no es un secreto de cuenta. La compilación funciona sin copiar variables locales. Para usar otro formulario se puede establecer `VITE_WEB3FORMS_ACCESS_KEY`; un valor explícitamente vacío activa únicamente la alternativa por correo. `.env.example` documenta esta opción; `.env.local` y los demás archivos de entorno locales no se exportan. Al cambiar el destinatario en una bifurcación, revisar también el correo y asunto de `feedback.ts` y el permiso `mailto:` de Tauri.
+
 ## Compilación personal
 
 `npm run package:personal` requiere los cuatro MP3 ya existentes en `.vienna-private/sounds/chesscom/`: move-self.mp3, capture.mp3, move-check.mp3 y game-end.mp3. Se incorporan solo al construir en modo personal. Si faltan, la compilación falla; no descarga sonidos de terceros. Esta compilación es de uso personal y no debe adjuntarse a una release pública. La compilación normal nunca incorpora esa carpeta.

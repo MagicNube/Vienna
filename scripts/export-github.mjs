@@ -8,6 +8,7 @@ const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const target = path.join(root, 'exports', 'Vienna-GitHub-' + stamp);
 const files = [
   '.gitattributes',
+  '.env.example',
   '.gitignore',
   '.prettierignore',
   '.prettierrc.json',

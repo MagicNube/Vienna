@@ -8,12 +8,14 @@ export function Modal({
   children,
   wide = false,
   className = '',
+  dismissOnBackdrop = true,
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   wide?: boolean;
   className?: string;
+  dismissOnBackdrop?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -41,7 +43,11 @@ export function Modal({
         pointerStart.current = null;
         const dialog = ref.current!;
         const rect = dialog.getBoundingClientRect();
-        if (e.target === dialog && backdropGesture(start, { x: e.clientX, y: e.clientY }, rect))
+        if (
+          dismissOnBackdrop &&
+          e.target === dialog &&
+          backdropGesture(start, { x: e.clientX, y: e.clientY }, rect)
+        )
           onClose();
       }}
     >

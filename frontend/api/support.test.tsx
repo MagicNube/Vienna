@@ -28,11 +28,17 @@ it('propaga fallos de apertura para poder comunicarlos en la campana', async () 
   await expect(openSupportPage()).rejects.toThrow('No browser');
 });
 
-it('limita el permiso nativo a esa URL y a la ventana principal, sin acceso a archivos', () => {
+it('limita el permiso nativo al apoyo y al correo de sugerencias en la ventana principal, sin acceso a archivos', () => {
   const capabilities = JSON.parse(fs.readFileSync('src-tauri/capabilities/default.json', 'utf8'));
   expect(capabilities.windows).toEqual(['main']);
   expect(capabilities.permissions.filter((p: unknown) => typeof p !== 'string')).toEqual([
-    { identifier: 'opener:allow-open-url', allow: [{ url: SUPPORT_URL }] },
+    {
+      identifier: 'opener:allow-open-url',
+      allow: [
+        { url: SUPPORT_URL },
+        { url: 'mailto:jesus.caravaca@protonmail.com[?]subject=Sugerencias%20Vienna&body=*' },
+      ],
+    },
   ]);
   expect(capabilities.permissions).not.toContain('opener:default');
   expect(capabilities.permissions).not.toContain('opener:allow-open-path');

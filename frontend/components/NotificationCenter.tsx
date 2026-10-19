@@ -11,6 +11,7 @@ export function NotificationCenter({
   paused = false,
   onPause,
   onResume,
+  onReport,
 }: {
   items: BackgroundActivity[];
   queued: number;
@@ -20,6 +21,7 @@ export function NotificationCenter({
   paused?: boolean;
   onPause?: () => void;
   onResume?: () => void;
+  onReport?: (detail: string) => void;
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -81,7 +83,10 @@ export function NotificationCenter({
         <div className="notification-list">
           {items.length === 0 && <p className="notification-empty">Sin notificaciones</p>}
           {items.map((item) => (
-            <div className={`notification-item ${item.kind}`} key={item.id}>
+            <div
+              className={`notification-item ${item.kind}${item.kind === 'error' && onReport ? ' has-report' : ''}`}
+              key={item.id}
+            >
               <button
                 className="notification-view"
                 disabled={!item.gameId}
@@ -122,6 +127,18 @@ export function NotificationCenter({
                   onClick={() => onDismiss(item.id)}
                 >
                   <Icon name="close" size={15} />
+                </button>
+              )}
+              {item.kind === 'error' && onReport && (
+                <button
+                  className="notification-report"
+                  type="button"
+                  onClick={() => {
+                    close();
+                    onReport(item.detail);
+                  }}
+                >
+                  Informar de este problema
                 </button>
               )}
             </div>

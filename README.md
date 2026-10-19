@@ -30,6 +30,8 @@ La previsualización de producción utiliza el mismo adaptador, en el puerto 142
 
 ## Uso
 
+**Sugerencias y problemas:** en **Ajustes → Ayuda** puedes escribir al desarrollador. Al abrir el formulario, el botón fijo cambia de «Listo» a «Enviar opinión»; muestra «Enviando…» y después «Enviado» con una confirmación visible. El contacto es opcional. Solo se comparten el texto, el contacto que indiques, la versión y el sistema operativo mediante Web3Forms; no se adjuntan partidas ni datos de la cuenta. El envío necesita Internet y conserva «Usar mi correo» como alternativa.
+
 1. Introduce tu usuario público de Chess.com o importa un PGN. También puedes soltar un archivo sobre la ventana; un archivo puede contener varias partidas separadas por su cabecera `Event`.
 2. Abre **Mis partidas** para buscar por jugador, ritmo, resultado o estado. Cada partida muestra un único estado: **Sin analizar**, **Analizada** (un tick) o **Revisada** (doble tick), que sustituye al anterior cuando ya la has visto. Pulsa la fila para abrirla y el estado para marcarla o desmarcarla; también puedes hacerlo bajo el tablero. Solo se puede marcar Revisada cuando hay un análisis completo guardado. Las partidas nuevas empiezan sin revisar. La marca manual se guarda sin alterar los análisis. Se actualizan automáticamente los dos archivos mensuales más recientes al iniciar la aplicación; las partidas anteriores descargadas se conservan.
 3. Selecciona **Rápido**, **Normal**, **Profundo**, **Máximo** o ajusta un tiempo manual y pulsa **Analizar partida**. Se analiza la posición inicial y todas las posiciones posteriores, incluida la final.
