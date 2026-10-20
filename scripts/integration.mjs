@@ -56,6 +56,12 @@ const options = { threads: 1, hash: 16, multiPv: 3, movetime: 150, depth: null }
 const chess = new Chess();
 const args = { fen: chess.fen(), history: [], options, lane: 'interactive', requestId: 'smoke' };
 try {
+  assert.equal(await bridge.call('get', { kind: 'settings', id: 'preferences' }), null);
+  assert.equal(await bridge.call('get', { kind: 'settings', id: 'lastGame' }), null);
+  assert.equal(await bridge.call('get', { kind: 'settings', id: 'freeBoard' }), null);
+  for (const kind of ['games', 'reviews', 'variants', 'game-seen'])
+    assert.deepEqual(await bridge.call('list', { kind }), []);
+  console.log('PASS primera instalación vacía: sin perfil, foto, partidas ni análisis');
   const status = await bridge.call('status');
   assert.equal(status.available, true);
   assert.equal(status.name, 'Stockfish 19');

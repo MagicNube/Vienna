@@ -4,7 +4,7 @@ import { repository } from '../database/repository';
 import { makeTree } from '../chess/game';
 import { GameReviewService, REVIEW_VERSION } from './GameReviewService';
 import { autoCandidates } from './autoCandidates';
-import { automaticStart } from './automaticStart';
+import { createAutomaticSession } from './automaticStart';
 import { createReviewNotifications } from './notifications';
 import { createBackgroundQueue, type BackgroundActivity, type ReviewJob } from './backgroundQueue';
 import type { EngineOptions, Game, GameTree, Review } from '../types';
@@ -33,6 +33,9 @@ export function useAutoReview({
   const [notifications, setNotifications] = useState<BackgroundActivity[]>([]);
   const [jobs, setJobs] = useState<Record<string, ReviewJob>>({});
   const [paused, setPaused] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [automaticSession] = useState(() => createAutomaticSession(Date.now()));
+  const stopRequest = useRef<Promise<void> | null>(null);
   const callbacks = useRef({ onGames, onReview });
   callbacks.current = { onGames, onReview };
   const scan = useRef<() => Promise<void>>(async () => {});
@@ -60,6 +63,19 @@ export function useAutoReview({
       pause: () => service.pause(),
       resume: () => service.resume(),
       onPaused: setPaused,
+      onCancelAll: async (ids) => {
+        // The same persisted exclusion used by storage cleanup is cleared when
+        // a game is explicitly analysed again and its full review is saved.
+        const results = await Promise.allSettled(
+          ids.map((gameId) =>
+            repository.put('review-cleaned', gameId, { gameId, reason: 'stopped' }),
+          ),
+        );
+        if (results.some((result) => result.status === 'rejected'))
+          throw Error(
+            'Los análisis se han parado, pero no se pudo guardar su exclusión automática.',
+          );
+      },
       notify: (activity) => notify.current(activity),
       onJobs: setJobs,
       onReview: (game, review) => callbacks.current.onReview(game.id, review),
@@ -79,17 +95,18 @@ export function useAutoReview({
     let active = true;
     let polling = false;
     const user = username.trim();
-    const started = Date.now();
-    void automaticStart(user, started).catch(() => {});
-    async function scanLibrary() {
+    async function scanLibrary(initialize = true) {
       try {
-        const [baseline, cleaned] = await Promise.all([
-          automaticStart(user, started),
+        const [games, cleaned] = await Promise.all([
+          repository.list<Game>('games'),
           repository.list<{ gameId: string }>('review-cleaned'),
         ]);
-        const excluded = new Set(cleaned.map((entry) => entry.gameId));
         if (!active) return;
-        const games = await repository.list<Game>('games');
+        const baseline = initialize
+          ? automaticSession.prepare(user, games)
+          : automaticSession.get(user);
+        if (baseline === null) return;
+        const excluded = new Set(cleaned.map((entry) => entry.gameId));
         if (active) await worker.current?.add(autoCandidates(games, user, baseline, excluded));
       } catch {
         if (active && !owner.current)
@@ -105,10 +122,12 @@ export function useAutoReview({
     async function poll() {
       if (!active || polling) return;
       polling = true;
+      let downloadedSuccessfully = false;
       try {
         const downloaded = await downloadGames(user);
         if (!active) return;
         for (const game of downloaded) await repository.put('games', game.id, game);
+        downloadedSuccessfully = true;
         const games = (await repository.list<Game>('games')).sort((a, b) => b.date - a.date);
         if (active) callbacks.current.onGames(games);
       } catch {
@@ -120,7 +139,9 @@ export function useAutoReview({
             detail: 'Se reintentará en cinco minutos.',
           });
       } finally {
-        if (active) await scanLibrary();
+        // A failed first request cannot establish an empty history snapshot.
+        // Never recover an earlier app opening's automatic backlog.
+        if (active) await scanLibrary(downloadedSuccessfully);
         polling = false;
       }
     }
@@ -131,13 +152,25 @@ export function useAutoReview({
       clearInterval(timer);
       scan.current = async () => {};
     };
-  }, [enabled, username, engineId, owner]);
+  }, [enabled, username, engineId, owner, automaticSession]);
   return {
     notifications,
     dismiss: (id: string) => dismiss.current(id),
     viewGame,
     jobs,
     paused,
+    stopping,
+    stopAll: () => {
+      if (stopRequest.current) return stopRequest.current;
+      const queue = worker.current;
+      if (!queue) return Promise.resolve();
+      setStopping(true);
+      stopRequest.current = queue.cancelAll().finally(() => {
+        stopRequest.current = null;
+        setStopping(false);
+      });
+      return stopRequest.current;
+    },
     pause: () => worker.current?.pause(),
     resume: () => worker.current?.resume(),
     reportError: useCallback((message: string) => {

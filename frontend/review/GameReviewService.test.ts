@@ -180,3 +180,39 @@ it('cancelar durante la pausa libera la espera y no analiza otra posición', asy
   const later = await service.run('later', makeTree('1. e4 *'), options, vi.fn());
   expect(later.complete).toBe(true);
 });
+
+it('parar todos con el servicio real despierta una pausa sin continuar las cien partidas', async () => {
+  mocks.analyze.mockResolvedValue(result);
+  const service = new GameReviewService();
+  const owner = { current: null as 'manual' | 'auto' | null };
+  const queue = createBackgroundQueue({
+    owner,
+    read: async () => null,
+    compatible: () => true,
+    run: (game, progress) => service.run(game.id, makeTree(game.pgn), options, progress),
+    cancel: () => service.cancel(),
+    pause: () => service.pause(),
+    resume: () => service.resume(),
+    notify: () => {},
+    onReview: () => queue.pause(),
+  });
+  const games = Array.from({ length: 101 }, (_, i): Game => ({
+    id: `queued-${i}`,
+    pgn: '1. e4 *',
+    white: 'Player',
+    black: 'Opponent',
+    date: 1,
+    result: '*',
+    source: 'pgn',
+    timeClass: 'pgn',
+    timeControl: '-',
+  }));
+  await queue.add(games);
+  await vi.waitFor(() => expect(mocks.put).toHaveBeenCalledOnce());
+  await queue.cancelAll();
+  await vi.waitFor(() => expect(owner.current).toBeNull());
+  expect(mocks.cancel).toHaveBeenCalledWith('review');
+  expect(mocks.analyze).toHaveBeenCalledOnce();
+  expect(mocks.put).toHaveBeenCalledOnce();
+  queue.stop();
+});

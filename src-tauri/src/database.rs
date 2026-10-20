@@ -308,6 +308,17 @@ mod tests {
     }
 
     #[test]
+    fn fresh_database_contains_no_profile_or_games() {
+        let db = Database::open(Path::new(":memory:")).unwrap();
+        for id in ["preferences", "lastGame", "freeBoard"] {
+            assert!(db.get("settings", id).unwrap().is_none());
+        }
+        for kind in ["games", "reviews", "variants", "game-seen", "settings"] {
+            assert!(db.list(kind).unwrap().is_empty());
+        }
+    }
+
+    #[test]
     fn storage_cleanup_preserves_games_unknown_dates_and_protected_jobs() {
         let db = storage_db();
         for (id, date) in [("old", 100), ("new", 300), ("running", 100), ("no-date", 0)] {

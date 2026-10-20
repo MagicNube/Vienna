@@ -34,6 +34,7 @@ export function createBackgroundQueue({
   pause,
   resume,
   onPaused,
+  onCancelAll,
 }: {
   owner: { current: 'manual' | 'auto' | null };
   read: (game: Game) => Promise<Review | null>;
@@ -46,12 +47,18 @@ export function createBackgroundQueue({
   pause?: () => void;
   resume?: () => void;
   onPaused?: (paused: boolean) => void;
+  onCancelAll?: (ids: string[]) => Promise<void>;
 }) {
-  const pending = new Map<string, { game: Game; run?: RunReview; cancelled?: boolean }>();
+  type Task = { game: Game; run?: RunReview; cancelled?: boolean };
+  const pending = new Map<string, Task>();
   const checking = new Set<string>();
+  const suppressed = new Set<string>();
+  let generation = 0;
+  let clearing: Promise<void> | null = null;
   const jobs: Record<string, ReviewJob> = {};
   const publish = () => onJobs?.({ ...jobs });
-  const remove = (id: string) => {
+  const remove = (id: string, task?: Task) => {
+    if (task && pending.get(id) !== task) return;
     pending.delete(id);
     delete jobs[id];
     publish();
@@ -64,7 +71,7 @@ export function createBackgroundQueue({
   let sequence = 0;
   const manualRunning = () => owner.current === 'manual';
   async function drain() {
-    if (!active || paused || draining || manualRunning()) return;
+    if (!active || paused || draining || clearing || manualRunning()) return;
     draining = true;
     try {
       for (const task of pending.values()) {
@@ -76,7 +83,7 @@ export function createBackgroundQueue({
           if (!active || paused || manualRunning()) break;
           if (task.cancelled) continue;
           if (!task.run && saved?.complete && compatible(saved)) {
-            remove(game.id);
+            remove(game.id, task);
             continue;
           }
           current = task;
@@ -115,11 +122,11 @@ export function createBackgroundQueue({
           if (!active) break;
           if (task.cancelled) {
             if (saved?.complete) onReview(game, saved);
-            remove(game.id);
+            remove(game.id, task);
             notify(null);
             continue;
           }
-          remove(game.id);
+          remove(game.id, task);
           onReview(game, result);
           notify({
             id: `${activityId}:complete`,
@@ -132,7 +139,7 @@ export function createBackgroundQueue({
           if (!active) break;
           if (saved?.complete) onReview(game, saved);
           if (task.cancelled) {
-            remove(game.id);
+            remove(game.id, task);
             notify(null);
             continue;
           }
@@ -142,7 +149,7 @@ export function createBackgroundQueue({
             notify(null);
             break;
           }
-          remove(game.id); // Retry at the next scan, not in a busy loop.
+          remove(game.id, task); // Retry at the next scan, not in a busy loop.
           notify({
             id: `${game.id}:error`,
             gameId: game.id,
@@ -193,9 +200,10 @@ export function createBackgroundQueue({
       void drain();
     },
     async add(games: Game[]) {
-      if (!active) return;
+      if (!active || clearing) return;
+      const ticket = generation;
       const candidates = games.filter((game) => {
-        if (pending.has(game.id) || checking.has(game.id)) return false;
+        if (suppressed.has(game.id) || pending.has(game.id) || checking.has(game.id)) return false;
         checking.add(game.id);
         return true;
       });
@@ -203,7 +211,7 @@ export function createBackgroundQueue({
         // A library scan is not a request to reanalyse a completed game.
         // Check before publishing a queued job, even while another game runs.
         const saved = await Promise.all(candidates.map(read));
-        if (!active) return;
+        if (!active || generation !== ticket) return;
         let added = false;
         candidates.forEach((game, index) => {
           if (pending.has(game.id) || (saved[index]?.complete && compatible(saved[index]))) return;
@@ -219,6 +227,7 @@ export function createBackgroundQueue({
     },
     analyze(game: Game, run: RunReview) {
       if (!active || pending.has(game.id)) return;
+      suppressed.delete(game.id); // An explicit request can retry a stopped game.
       pending.set(game.id, { game, run });
       jobs[game.id] = { state: 'queued', done: 0, manual: true };
       publish();
@@ -230,6 +239,37 @@ export function createBackgroundQueue({
       task.cancelled = true;
       if (task === current) await cancel();
       else remove(id);
+    },
+    cancelAll() {
+      if (clearing) return clearing;
+      if (!active) return Promise.resolve();
+      generation++;
+      const ids = [...new Set([...pending.keys(), ...checking])];
+      for (const id of ids) suppressed.add(id);
+      for (const task of pending.values()) task.cancelled = true;
+      pending.clear();
+      for (const id of Object.keys(jobs)) delete jobs[id];
+      publish();
+      progressActivity = null;
+      notify(null);
+      // Cancel before waking a paused service so it cannot start another position.
+      const cancellation = current ? cancel() : Promise.resolve();
+      paused = false;
+      onPaused?.(false);
+      resume?.();
+      clearing = Promise.allSettled([
+        cancellation,
+        Promise.resolve().then(() => onCancelAll?.(ids)),
+      ])
+        .then((results) => {
+          const failed = results.find((result) => result.status === 'rejected');
+          if (failed?.status === 'rejected') throw failed.reason;
+        })
+        .finally(() => {
+          clearing = null;
+          void drain();
+        });
+      return clearing;
     },
     drain,
     stop() {

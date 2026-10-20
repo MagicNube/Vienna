@@ -20,7 +20,7 @@ const result: Review = {
   moves: [],
   positions: {},
 };
-function setup() {
+function setup(onCancelAll?: (ids: string[]) => Promise<void>) {
   const owner = { current: null as 'auto' | 'manual' | null };
   const saved = new Map<string, Review>();
   const read = vi.fn(async (game: Game) => saved.get(game.id) ?? null);
@@ -44,9 +44,126 @@ function setup() {
     onJobs,
     onReview,
     compatible: (review) => review.version === 1 && review.engineId === 'engine',
+    onCancelAll,
   });
   return { queue, owner, saved, read, run, notify, onReview, cancel, onJobs };
 }
+
+it('parar todos vacía 100 pendientes, cancela el activo y no publica su resultado tardío', async () => {
+  const persist = vi.fn(async (_ids: string[]) => {});
+  const t = setup(persist);
+  let finish!: (review: Review) => void;
+  t.run.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const games = Array.from({ length: 101 }, (_, i) => game(`game-${i}`));
+  await t.queue.add(games);
+  await vi.waitFor(() => expect(t.run).toHaveBeenCalledOnce());
+  await t.queue.cancelAll();
+  expect(t.cancel).toHaveBeenCalledOnce();
+  expect(t.onJobs).toHaveBeenLastCalledWith({});
+  expect(t.notify).toHaveBeenLastCalledWith(null);
+  expect(new Set(persist.mock.calls[0][0])).toEqual(new Set(games.map((g) => g.id)));
+  finish(result);
+  await vi.waitFor(() => expect(t.owner.current).toBeNull());
+  expect(t.onReview).not.toHaveBeenCalled();
+  expect(t.notify.mock.calls.some(([item]) => item?.kind === 'success')).toBe(false);
+  await t.queue.add(games);
+  expect(t.run).toHaveBeenCalledOnce();
+  expect(t.onJobs).toHaveBeenLastCalledWith({});
+  await t.queue.add([game('new-after-stop')]);
+  await vi.waitFor(() => expect(t.run).toHaveBeenCalledTimes(2));
+  t.queue.stop();
+});
+
+it('parar una cola pausada descarta solicitudes manuales y automáticas sin empezar ninguna', async () => {
+  const t = setup();
+  t.queue.pause();
+  await t.queue.add([game('auto')]);
+  const manual = vi.fn(async () => result);
+  t.queue.analyze(game('manual'), manual);
+  await t.queue.cancelAll();
+  expect(t.onJobs).toHaveBeenLastCalledWith({});
+  expect(t.run).not.toHaveBeenCalled();
+  expect(manual).not.toHaveBeenCalled();
+  expect(t.cancel).not.toHaveBeenCalled();
+  t.queue.resume();
+  await t.queue.drain();
+  expect(t.run).not.toHaveBeenCalled();
+  expect(manual).not.toHaveBeenCalled();
+  t.queue.stop();
+});
+
+it('un sondeo que estaba leyendo al parar no vuelve a introducir sus partidas', async () => {
+  const persist = vi.fn(async (_ids: string[]) => {});
+  const t = setup(persist);
+  let finishRead!: (review: Review | null) => void;
+  t.read.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finishRead = resolve;
+      }),
+  );
+  const scanning = t.queue.add([game('old')]);
+  await t.queue.cancelAll();
+  finishRead(null);
+  await scanning;
+  expect(persist).toHaveBeenCalledWith(['old']);
+  expect(t.run).not.toHaveBeenCalled();
+  expect(t.onJobs).toHaveBeenLastCalledWith({});
+  await t.queue.add([game('old')]);
+  expect(t.run).not.toHaveBeenCalled();
+  t.queue.stop();
+});
+
+it('permite volver a solicitar manualmente una cancelada sin que la limpieza antigua la quite', async () => {
+  const t = setup();
+  t.saved.set('same', result);
+  let reject!: (error: Error) => void;
+  const old = vi.fn(
+    () =>
+      new Promise<Review>((_resolve, no) => {
+        reject = no;
+      }),
+  );
+  t.queue.analyze(game('same'), old);
+  await vi.waitFor(() => expect(old).toHaveBeenCalledOnce());
+  await t.queue.cancelAll();
+  const again = vi.fn(async () => result);
+  t.queue.analyze(game('same'), again);
+  reject(Error('cancelled'));
+  await vi.waitFor(() => expect(again).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(t.onJobs).toHaveBeenLastCalledWith({}));
+  expect(t.saved.get('same')).toBe(result);
+  expect(t.onReview).toHaveBeenCalledWith(game('same'), result);
+  t.queue.stop();
+});
+
+it('un fallo al guardar las exclusiones no impide cancelar el motor ni vaciar la cola', async () => {
+  const t = setup(async () => {
+    throw Error('disk');
+  });
+  let reject!: (error: Error) => void;
+  t.run.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, no) => {
+        reject = no;
+      }),
+  );
+  await t.queue.add([game('active'), game('waiting')]);
+  await vi.waitFor(() => expect(t.run).toHaveBeenCalledOnce());
+  await expect(t.queue.cancelAll()).rejects.toThrow('disk');
+  expect(t.cancel).toHaveBeenCalledOnce();
+  expect(t.onJobs).toHaveBeenLastCalledWith({});
+  reject(Error('cancelled'));
+  await vi.waitFor(() => expect(t.owner.current).toBeNull());
+  await t.queue.add([game('active'), game('waiting')]);
+  expect(t.run).toHaveBeenCalledOnce();
+  t.queue.stop();
+});
 
 it('una cola pausada acepta partidas nuevas pero no empieza ninguna hasta reanudar', async () => {
   const t = setup();

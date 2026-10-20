@@ -16,6 +16,7 @@ import { ReviewSummary } from './components/ReviewSummary';
 import { MoveExplanation } from './components/MoveExplanation';
 import { ReturnControl } from './components/ReturnControl';
 import { ProfilePanel } from './components/ProfilePanel';
+import { AccountChoice } from './components/AccountChoice';
 import { profileInitials } from './profile/image';
 import { MoveList } from './components/MoveList';
 import { RecentGame } from './components/RecentGame';
@@ -113,12 +114,15 @@ export function App() {
     } | null>(null),
     [engineBusy, setEngineBusy] = useState(false);
   const [tab, setTab] = useState<'moves' | 'review'>('review'),
-    [modal, setModal] = useState<'import' | 'settings' | 'library' | 'connect' | 'profile' | null>(
-      null,
-    );
+    [modal, setModal] = useState<
+      'import' | 'settings' | 'library' | 'connect' | 'profile' | 'account-choice' | null
+    >(null);
   const [ready, setReady] = useState(false),
     [syncing, setSyncing] = useState(false),
     [error, setError] = useState('');
+  const [accountConfirmed, setAccountConfirmed] = useState(false);
+  const [accountBusy, setAccountBusy] = useState(false);
+  const rememberedGame = useRef<Game | undefined>(undefined);
   const [pgn, setPgn] = useState(''),
     [username, setUsername] = useState(''),
     [importing, setImporting] = useState(false);
@@ -203,7 +207,7 @@ export function App() {
     setGames((previous) => updatedGames(previous, next));
   }
   const autoReview = useAutoReview({
-    enabled: ready && settings.autoReview && !!status?.available,
+    enabled: ready && accountConfirmed && settings.autoReview && !!status?.available,
     username: settings.username,
     engineId: status?.engineId,
     options: autoOptions,
@@ -322,6 +326,30 @@ export function App() {
         : [...previous, selected].sort((a, b) => b.date - a.date),
     );
   }
+  function chooseNewAccount() {
+    setSettings((previous) => ({ ...previous, username: '', profileImage: undefined }));
+    setUsername('');
+    setGames([]);
+    rememberedGame.current = undefined;
+    setAccountConfirmed(true);
+    setModal('connect');
+  }
+  async function continueAccount() {
+    if (accountBusy) return;
+    setAccountBusy(true);
+    setAccountConfirmed(true);
+    try {
+      const selected = rememberedGame.current;
+      rememberedGame.current = undefined;
+      setModal(null);
+      if (selected) await selectGame(selected, settings);
+      await syncGames(settings);
+    } catch (error) {
+      reportError(error);
+    } finally {
+      setAccountBusy(false);
+    }
+  }
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
@@ -359,10 +387,16 @@ export function App() {
         setGames(all.sort((a, b) => b.date - a.date));
         const ownGames = accountGames(all, config.username);
         const selected = ownGames.find((g) => g.id === last) ?? ownGames[0];
-        if (selected) await selectGame(selected, config);
+        if (config.username.trim()) {
+          rememberedGame.current = selected;
+          setUsername('');
+          setModal('account-choice');
+        } else {
+          setAccountConfirmed(true);
+          if (selected) await selectGame(selected, config);
+          if (!all.length) setModal('connect');
+        }
         setReady(true);
-        if (config.username) void syncGames(config);
-        else if (!all.length) setModal('connect');
       } catch (e) {
         reportError(e);
         setReady(true);
@@ -370,7 +404,7 @@ export function App() {
     })();
   }, []);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !accountConfirmed) return;
     const scope = libraryGames.filter(
       (g) => isStatisticsGame(g) && statisticsColor(g, settings.username, 'w'),
     );
@@ -378,15 +412,15 @@ export function App() {
       void statisticsCache.current.load(scope).catch(() => {});
     }, 500);
     return () => clearTimeout(timer);
-  }, [ready, libraryGames, settings.username, reviewRevision]);
+  }, [ready, accountConfirmed, libraryGames, settings.username, reviewRevision]);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !accountConfirmed) return;
     const timer = setTimeout(
       () => repository.put('settings', 'preferences', settings).catch(reportError),
       300,
     );
     return () => clearTimeout(timer);
-  }, [settings, ready]);
+  }, [settings, ready, accountConfirmed]);
   useEffect(() => {
     if (!ready || view === 'statistics') return;
     if (storedAnalysis) {
@@ -783,6 +817,8 @@ export function App() {
             paused={autoReview.paused}
             onPause={autoReview.pause}
             onResume={autoReview.resume}
+            stopping={autoReview.stopping}
+            onStopAll={() => void autoReview.stopAll().catch(reportError)}
           />
         </div>
         <nav>
@@ -1431,6 +1467,16 @@ export function App() {
           />
         </Modal>
       )}
+      {modal === 'account-choice' && (
+        <Modal title="Cuenta guardada" dismissOnBackdrop={false} onClose={chooseNewAccount}>
+          <AccountChoice
+            username={settings.username}
+            busy={accountBusy}
+            onContinue={() => void continueAccount()}
+            onNew={chooseNewAccount}
+          />
+        </Modal>
+      )}
       {modal === 'connect' && (
         <Modal title="Conectar Chess.com" onClose={() => setModal(null)}>
           <div className="connect-emblem">
@@ -1443,6 +1489,7 @@ export function App() {
             onSubmit={async (e) => {
               e.preventDefault();
               const config = { ...settings, username: username.trim() };
+              setAccountConfirmed(true);
               setSettings(config);
               await repository.put('settings', 'preferences', config);
               await syncGames(config);
@@ -1451,7 +1498,7 @@ export function App() {
             <label>
               Nombre de usuario de Chess.com
               <input
-                autoComplete="username"
+                autoComplete="off"
                 placeholder="Tu nombre de usuario"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}

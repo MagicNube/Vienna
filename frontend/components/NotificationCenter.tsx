@@ -11,6 +11,8 @@ export function NotificationCenter({
   paused = false,
   onPause,
   onResume,
+  onStopAll,
+  stopping = false,
   onReport,
 }: {
   items: BackgroundActivity[];
@@ -21,6 +23,8 @@ export function NotificationCenter({
   paused?: boolean;
   onPause?: () => void;
   onResume?: () => void;
+  onStopAll?: () => void;
+  stopping?: boolean;
   onReport?: (detail: string) => void;
 }) {
   const panel = useRef<HTMLDivElement>(null);
@@ -144,29 +148,46 @@ export function NotificationCenter({
             </div>
           ))}
         </div>
-        {(queued > 0 || paused || items.some((item) => item.kind === 'progress')) && (
+        {(queued > 0 || paused || stopping || items.some((item) => item.kind === 'progress')) && (
           <footer>
             <span>
-              {queued > 0
-                ? `${queued} ${queued === 1 ? 'partida en cola' : 'partidas en cola'}`
-                : paused
-                  ? 'Cola en pausa'
-                  : 'Análisis en curso'}
+              {stopping
+                ? 'Deteniendo análisis…'
+                : queued > 0
+                  ? `${queued} ${queued === 1 ? 'partida en cola' : 'partidas en cola'}`
+                  : paused
+                    ? 'Cola en pausa'
+                    : 'Análisis en curso'}
             </span>
-            {onPause && onResume && (
-              <button
-                className="notification-pause"
-                onClick={paused ? onResume : onPause}
-                title={
-                  paused
-                    ? 'Continuar desde la posición pendiente'
-                    : 'Pausar toda la cola al terminar la posición actual'
-                }
-              >
-                <Icon name={paused ? 'play' : 'pause'} size={14} />
-                {paused ? 'Reanudar' : 'Pausar'}
-              </button>
-            )}
+            <div className="notification-queue-actions">
+              {onPause && onResume && (
+                <button
+                  className="notification-pause"
+                  disabled={stopping}
+                  onClick={paused ? onResume : onPause}
+                  title={
+                    paused
+                      ? 'Continuar desde la posición pendiente'
+                      : 'Pausar toda la cola al terminar la posición actual'
+                  }
+                >
+                  <Icon name={paused ? 'play' : 'pause'} size={14} />
+                  {paused ? 'Reanudar' : 'Pausar'}
+                </button>
+              )}
+              {onStopAll && (
+                <button
+                  className="notification-stop"
+                  type="button"
+                  disabled={stopping}
+                  onClick={onStopAll}
+                  title="Detener el análisis actual y vaciar toda la cola"
+                >
+                  <Icon name="stop" size={14} />
+                  Parar todos
+                </button>
+              )}
+            </div>
           </footer>
         )}
       </div>

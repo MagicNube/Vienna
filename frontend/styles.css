@@ -1680,6 +1680,11 @@ progress {
 .modal form > .primary {
   margin-top: 20px;
 }
+.account-choice {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
 .text-button {
   font-size: 13px;
   color: var(--muted);
@@ -4552,6 +4557,9 @@ button.evaluation-tone.w:focus-visible {
 .notification-panel h2 {
   font-size: 15px;
 }
+.sidebar .notification-panel button {
+  font-size: 13px;
+}
 .notification-panel .icon-button {
   width: 28px;
   height: 28px;
@@ -4568,7 +4576,7 @@ button.evaluation-tone.w:focus-visible {
 .notification-item:last-child {
   border-bottom: 0;
 }
-.notification-view {
+.sidebar .notification-view {
   flex: 1;
   min-width: 0;
   align-items: flex-start;
@@ -4594,10 +4602,14 @@ button.evaluation-tone.w:focus-visible {
 .notification-item.error .notification-view > svg {
   color: var(--danger);
 }
-.notification-view > span {
+.sidebar .notification-panel .notification-view > span {
   display: grid;
   min-width: 0;
   gap: 3px;
+}
+.sidebar .notification-panel button svg {
+  width: 16px;
+  height: 16px;
 }
 .notification-view strong {
   font-size: 13px;
@@ -4629,8 +4641,16 @@ button.evaluation-tone.w:focus-visible {
   border-top: 1px solid var(--border);
   color: var(--muted);
   font-size: 12px;
+  flex-wrap: wrap;
 }
-.notification-panel .notification-pause {
+.notification-queue-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-left: auto;
+}
+.notification-panel .notification-pause,
+.notification-panel .notification-stop {
   width: auto;
   flex-shrink: 0;
   padding: 5px 8px;
@@ -4638,6 +4658,13 @@ button.evaluation-tone.w:focus-visible {
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);
+}
+.notification-panel .notification-stop {
+  color: var(--danger);
+}
+.notification-panel .notification-stop:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+  border-color: var(--danger);
 }
 @media (max-width: 1200px) and (min-width: 1001px) {
   .sidebar-header .brand {
