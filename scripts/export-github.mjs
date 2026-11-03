@@ -23,6 +23,7 @@ const files = [
   'THIRD_PARTY_NOTICES.md',
   'docs/DISTRIBUTION.md',
   'docs/PUBLISHING.md',
+  'docs/USER_GUIDE.es.md',
   'src-tauri/Cargo.toml',
   'src-tauri/Cargo.lock',
   'src-tauri/build.rs',
@@ -97,3 +98,4 @@ await writeFile(
   ) + '\n',
 );
 console.log(target);
+
